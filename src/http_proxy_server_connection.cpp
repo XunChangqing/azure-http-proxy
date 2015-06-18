@@ -41,8 +41,10 @@ std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::crea
 
 void http_proxy_server_connection::start()
 {
-    this->connection_context.connection_state = proxy_connection_state::read_cipher_data;
-    this->async_read_data_from_proxy_client(1, std::min<std::size_t>(this->rsa_pri.modulus_size(), BUFFER_LENGTH));
+    //this->connection_context.connection_state = proxy_connection_state::read_cipher_data;
+    //this->async_read_data_from_proxy_client(1, std::min<std::size_t>(this->rsa_pri.modulus_size(), BUFFER_LENGTH));
+    this->connection_context.connection_state = proxy_connection_state::read_http_request_header;
+    this->async_read_data_from_proxy_client();
 }
 
 void http_proxy_server_connection::async_read_data_from_proxy_client(std::size_t at_least_size, std::size_t at_most_size)
@@ -179,14 +181,14 @@ void http_proxy_server_connection::async_write_response_header_to_proxy_client()
     if (this->modified_response_data.size() % 256 != 0) {
         blocks += 1;
     }
-    for (std::size_t i = 0; i < blocks; ++i) {
-        std::size_t block_length = 256;
-        if ((i + 1) * 256 > this->modified_response_data.size()) {
-            block_length = this->modified_response_data.size() % 256;
-        }
-        std::copy(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256]), reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256 + block_length]), temp_buffer);
-        this->encryptor->encrypt(temp_buffer, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 256]), block_length);
-    }
+    //for (std::size_t i = 0; i < blocks; ++i) {
+        //std::size_t block_length = 256;
+        //if ((i + 1) * 256 > this->modified_response_data.size()) {
+            //block_length = this->modified_response_data.size() % 256;
+        //}
+        //std::copy(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256]), reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256 + block_length]), temp_buffer);
+        //this->encryptor->encrypt(temp_buffer, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 256]), block_length);
+    //}
     this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
     this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
 }
@@ -285,15 +287,15 @@ void http_proxy_server_connection::report_error(const std::string& status_code, 
         this->modified_response_data += response_content;
     }
     
-    unsigned char temp_buffer[16];
-    for (std::size_t i = 0; i * 16 < this->modified_response_data.size(); ++i) {
-        std::size_t block_length = 16;
-        if (this->modified_response_data.size() - i * 16 < 16) {
-            block_length = this->modified_response_data.size() % 16;
-        }
-        this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 16]), temp_buffer, block_length);
-        std::copy(temp_buffer, temp_buffer + block_length, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 16]));
-    }
+    //unsigned char temp_buffer[16];
+    //for (std::size_t i = 0; i * 16 < this->modified_response_data.size(); ++i) {
+        //std::size_t block_length = 16;
+        //if (this->modified_response_data.size() - i * 16 < 16) {
+            //block_length = this->modified_response_data.size() % 16;
+        //}
+        //this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 16]), temp_buffer, block_length);
+        //std::copy(temp_buffer, temp_buffer + block_length, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 16]));
+    //}
     this->connection_context.connection_state = proxy_connection_state::report_error;
     auto self(this->shared_from_this());
     this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0 ,this->modified_response_data.size());
@@ -312,15 +314,15 @@ void http_proxy_server_connection::report_authentication_failed()
     this->modified_response_data += std::to_string(content.size());
     this->modified_response_data += "\r\n\r\n";
     this->modified_response_data += content;
-    unsigned char temp_buffer[16];
-    for (std::size_t i = 0; i * 16 < this->modified_response_data.size(); ++i) {
-        std::size_t block_length = 16;
-        if (this->modified_response_data.size() - i * 16 < 16) {
-            block_length = this->modified_response_data.size() % 16;
-        }
-        this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 16]), temp_buffer, block_length);
-        std::copy(temp_buffer, temp_buffer + block_length, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 16]));
-    }
+    //unsigned char temp_buffer[16];
+    //for (std::size_t i = 0; i * 16 < this->modified_response_data.size(); ++i) {
+        //std::size_t block_length = 16;
+        //if (this->modified_response_data.size() - i * 16 < 16) {
+            //block_length = this->modified_response_data.size() % 16;
+        //}
+        //this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 16]), temp_buffer, block_length);
+        //std::copy(temp_buffer, temp_buffer + block_length, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 16]));
+    //}
     this->connection_context.connection_state = proxy_connection_state::report_error;
     this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
 }
@@ -387,9 +389,10 @@ void http_proxy_server_connection::on_resolved(boost::asio::ip::tcp::resolver::i
 void http_proxy_server_connection::on_connect()
 {
     if (this->request_header->method() == "CONNECT") {
-        const unsigned char response_message[] = "HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n";
-        this->modified_response_data.resize(sizeof(response_message) - 1);
-        this->encryptor->encrypt(response_message, const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(&this->modified_response_data[0])), this->modified_response_data.size());
+        //const unsigned char response_message[] = "HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n";
+        //this->modified_response_data.resize(sizeof(response_message) - 1);
+        //this->encryptor->encrypt(response_message, const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(&this->modified_response_data[0])), this->modified_response_data.size());
+        this->modified_response_data = "HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n";
         this->connection_context.connection_state = proxy_connection_state::report_connection_established;
         this->async_write_data_to_proxy_client(&this->modified_response_data[0], 0, this->modified_response_data.size());
     }
@@ -524,8 +527,9 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
         this->async_read_data_from_proxy_client();
         return;
     }
-    assert(this->encryptor != nullptr && this->decryptor != nullptr);
-    this->decryptor->decrypt(reinterpret_cast<const unsigned char*>(&this->upgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->upgoing_buffer_write[0]), bytes_transferred);
+    //assert(this->encryptor != nullptr && this->decryptor != nullptr);
+    //this->decryptor->decrypt(reinterpret_cast<const unsigned char*>(&this->upgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->upgoing_buffer_write[0]), bytes_transferred);
+    this->upgoing_buffer_write = this->upgoing_buffer_read;
     if (this->connection_context.connection_state == proxy_connection_state::read_http_request_header) {
         const auto& decripted_data_buffer = this->upgoing_buffer_write;
         this->request_data.append(decripted_data_buffer.begin(), decripted_data_buffer.begin() + bytes_transferred);
@@ -803,11 +807,13 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
             }
         }
         this->connection_context.connection_state = proxy_connection_state::write_http_response_content;
-        this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->downgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->downgoing_buffer_write[0]), bytes_transferred);
+        //this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->downgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->downgoing_buffer_write[0]), bytes_transferred);
+        this->downgoing_buffer_write = this->downgoing_buffer_read;
         this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
     }
     else if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
-        this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->downgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->downgoing_buffer_write[0]), bytes_transferred);
+        //this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->downgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->downgoing_buffer_write[0]), bytes_transferred);
+        this->downgoing_buffer_write = this->downgoing_buffer_read;
         this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
     }
 }
