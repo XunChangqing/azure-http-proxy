@@ -54,7 +54,7 @@ void http_proxy_server::start_accept()
     auto socket = std::make_shared<boost::asio::ip::tcp::socket>(this->acceptor.get_io_service());
     this->acceptor.async_accept(*socket, [socket, this](const boost::system::error_code& error) {
         if (!error) {
-            std::cout<< "new connection!\n";
+            //std::cout<< "new connection!\n";
             auto connection = http_proxy_server_connection::create(std::move(*socket));
             connection->start();
             this->start_accept();

@@ -108,12 +108,28 @@ void http_proxy_server_connection::async_connect_to_origin_server()
         this->on_connect();
     }
     else {
+        //mythxcq
         this->connection_context.origin_server_name = this->request_header->host();
         this->connection_context.origin_server_port = this->request_header->port();
         boost::asio::ip::tcp::resolver::query query(this->request_header->host(), std::to_string(this->request_header->port()));
+        //boost::asio::ip::tcp::resolver::query query("127.0.0.1", std::to_string(3128));
         auto self(this->shared_from_this());
         this->connection_context.connection_state = proxy_connection_state::resolve_origin_server_address;
         this->set_timer();
+        //mythxcq
+        const time_t t = time(NULL);
+        struct tm* current_time = localtime(&t);
+        std::cout<<current_time->tm_hour<<":"
+          <<current_time->tm_min<<":"
+          <<current_time->tm_sec<<"@@"
+          <<(unsigned long)this<<"@@"
+          <<"Resolve: "
+          <<this->request_header->host()
+          //<<this->request_header->port()<<","
+          <<this->request_header->path_and_query()<<","
+          <<this->request_header->method()
+          <<std::endl;
+
         this->resolver.async_resolve(query,
             this->strand.wrap([this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::iterator iterator) {
                 if (this->cancel_timer()) {
@@ -365,6 +381,20 @@ void http_proxy_server_connection::on_resolved(boost::asio::ip::tcp::resolver::i
     auto self(this->shared_from_this());
     this->connection_context.connection_state = proxy_connection_state::connect_to_origin_server;
     this->set_timer();
+    //mythxcq
+    const time_t t = time(NULL);
+    struct tm* current_time = localtime(&t);
+    std::cout<<current_time->tm_hour<<":"
+      <<current_time->tm_min<<":"
+      <<current_time->tm_sec<<"@@"
+      <<(unsigned long)this<<"@@"
+      <<"Resolved: "
+      <<this->request_header->host()
+      //<<this->request_header->port()<<","
+      <<this->request_header->path_and_query()<<","
+      <<this->request_header->method()
+      <<std::endl;
+
     this->origin_server_socket.async_connect(endpoint_iterator->endpoint(),
         this->strand.wrap([this, self, endpoint_iterator](const boost::system::error_code& error) mutable {
             if (this->cancel_timer()) {
@@ -388,6 +418,19 @@ void http_proxy_server_connection::on_resolved(boost::asio::ip::tcp::resolver::i
 
 void http_proxy_server_connection::on_connect()
 {
+    ////mythxcq
+    //const time_t t = time(NULL);
+    //struct tm* current_time = localtime(&t);
+    //std::cout<<current_time->tm_hour<<":"
+      //<<current_time->tm_min<<":"
+      //<<current_time->tm_sec<<"@@"
+      //<<(unsigned long)this<<"@@"
+      //<<"Connected: "
+      //<<this->request_header->host()
+      ////<<this->request_header->port()<<","
+      //<<this->request_header->path_and_query()<<","
+      //<<this->request_header->method()
+      //<<std::endl;
     if (this->request_header->method() == "CONNECT") {
         //const unsigned char response_message[] = "HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n";
         //this->modified_response_data.resize(sizeof(response_message) - 1);
@@ -549,6 +592,19 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
             this->report_error("400", "Bad Request", "Failed to parse the http request header");
             return;
         }
+        ////mythxcq
+        //const time_t t = time(NULL);
+        //struct tm* current_time = localtime(&t);
+        //std::cout<<current_time->tm_hour<<":"
+          //<<current_time->tm_min<<":"
+          //<<current_time->tm_sec<<"@@"
+          //<<(unsigned long)this<<"@@"
+          //<<"Request: "
+          //<<this->request_header->host()
+          ////<<this->request_header->port()<<","
+          //<<this->request_header->path_and_query()<<","
+          //<<this->request_header->method()
+          //<<std::endl;
 
         if (this->request_header->method() != "GET"
             // && this->request_header->method() != "OPTIONS"
@@ -796,6 +852,25 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
             }
         }
         this->async_write_response_header_to_proxy_client();
+        ////mythxcq
+        //const time_t t = time(NULL);
+        //struct tm* current_time = localtime(&t);
+        //std::cout<<current_time->tm_hour<<":"
+          //<<current_time->tm_min<<":"
+          //<<current_time->tm_sec<<"@@"
+          //<<(unsigned long)this<<"@@"
+          //<<"Response: "
+          //<<this->request_header->host()
+          ////<<this->request_header->port()<<","
+          //<<this->request_header->path_and_query()<<","
+          //<<this->request_header->method()
+          //<<std::endl;
+        //auto content_length_value = this->response_header->get_header_value("Content-Length");
+        //auto mime_type = this->response_header->get_header_value("content-type");
+        //std::cout<<"Response: "
+          //<<content_length_value<<", "
+          //<<mime_type<<", "
+          //<<std::endl;
     }
     else if (this->connection_context.connection_state == proxy_connection_state::read_http_response_content) {
         if (this->read_response_context.content_length) {
