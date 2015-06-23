@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <fstream>
+#include <boost/regex.hpp>
 
 #include "authentication.hpp"
 #include "http_proxy_server_config.hpp"
@@ -24,8 +26,7 @@ http_proxy_server_connection::http_proxy_server_connection(boost::asio::ip::tcp:
     proxy_client_socket(std::move(proxy_client_socket)),
     origin_server_socket(this->proxy_client_socket.get_io_service()),
     resolver(this->proxy_client_socket.get_io_service()),
-    timer(this->proxy_client_socket.get_io_service()),
-    rsa_pri(http_proxy_server_config::get_instance().get_rsa_private_key())
+    timer(this->proxy_client_socket.get_io_service())
 {
     this->connection_context.connection_state = proxy_connection_state::read_cipher_data;
 }
@@ -109,27 +110,35 @@ void http_proxy_server_connection::async_connect_to_origin_server()
     }
     else {
         //mythxcq
-        this->connection_context.origin_server_name = this->request_header->host();
-        this->connection_context.origin_server_port = this->request_header->port();
-        boost::asio::ip::tcp::resolver::query query(this->request_header->host(), std::to_string(this->request_header->port()));
-        //boost::asio::ip::tcp::resolver::query query("127.0.0.1", std::to_string(3128));
+        //boost::asio::ip::tcp::resolver::query query(this->request_header->host(), std::to_string(this->request_header->port()));
+        //when connect method, connect to the original server, else to squid3 proxy server
+        if(this->request_header->method() == "CONNECT"){
+          this->connection_context.origin_server_name = this->request_header->host();
+          this->connection_context.origin_server_port = this->request_header->port();
+        }
+        else if(http_proxy_server_config::get_instance().enable_filter_mode()){
+          this->connection_context.origin_server_name = "127.0.0.1";
+          this->connection_context.origin_server_port = 3128;
+        }
+        //else if(http_proxy_server_config::get_instance().enable_request_bypass() &&
+             //boost::regex_match(this->request_data->path_and_query(), boost::regex("*\.jpg") ))
+        //{
+          ////remote filter proxy server
+          ////shoule be set dinamically
+        //}
+        else{
+          this->connection_context.origin_server_name = this->request_header->host();
+          this->connection_context.origin_server_port = this->request_header->port();
+        }
+
+        //mythxcq
+        //std::cout<<"Query: "<<this->connection_context.origin_server_name<<std::endl;
+
+        boost::asio::ip::tcp::resolver::query query(this->connection_context.origin_server_name,
+            std::to_string(this->connection_context.origin_server_port));
         auto self(this->shared_from_this());
         this->connection_context.connection_state = proxy_connection_state::resolve_origin_server_address;
         this->set_timer();
-        //mythxcq
-        const time_t t = time(NULL);
-        struct tm* current_time = localtime(&t);
-        std::cout<<current_time->tm_hour<<":"
-          <<current_time->tm_min<<":"
-          <<current_time->tm_sec<<"@@"
-          <<(unsigned long)this<<"@@"
-          <<"Resolve: "
-          <<this->request_header->host()
-          //<<this->request_header->port()<<","
-          <<this->request_header->path_and_query()<<","
-          <<this->request_header->method()
-          <<std::endl;
-
         this->resolver.async_resolve(query,
             this->strand.wrap([this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::iterator iterator) {
                 if (this->cancel_timer()) {
@@ -147,6 +156,14 @@ void http_proxy_server_connection::async_connect_to_origin_server()
 
 void http_proxy_server_connection::async_write_request_header_to_origin_server()
 {
+  if(http_proxy_server_config::get_instance().enable_filter_mode() 
+      //|| (http_proxy_server_config::get_instance().enable_request_bypass() &&
+       //boost::regex_match(this->request_data->path_and_query(), boost::regex("*\.jpg") ))
+      ){
+    this->connection_context.connection_state = proxy_connection_state::write_http_request_header;
+    this->async_write_data_to_origin_server(this->request_data.data(), 0, this->request_data.size());
+  }
+  else{
     auto request_content_begin = this->request_data.begin() + this->request_data.find("\r\n\r\n") + 4;
     this->modified_request_data = this->request_header->method();
     this->modified_request_data.push_back(' ');
@@ -168,6 +185,9 @@ void http_proxy_server_connection::async_write_request_header_to_origin_server()
     this->modified_request_data.append(request_content_begin, this->request_data.end());
     this->connection_context.connection_state = proxy_connection_state::write_http_request_header;
     this->async_write_data_to_origin_server(this->modified_request_data.data(), 0, this->modified_request_data.size());
+    //mythxcq
+    //std::cout<<"Write Request Header: "<<this->modified_request_data<<std::endl;
+  }
 }
 
 void http_proxy_server_connection::async_write_response_header_to_proxy_client()
@@ -192,11 +212,15 @@ void http_proxy_server_connection::async_write_response_header_to_proxy_client()
     }
     this->modified_response_data += "\r\n";
     this->modified_response_data.append(response_content_begin, this->response_data.end());
-    unsigned char temp_buffer[256];
-    std::size_t blocks = this->modified_response_data.size() / 256;
-    if (this->modified_response_data.size() % 256 != 0) {
-        blocks += 1;
-    }
+    this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
+    this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
+    //mythxcq
+    //std::cout<<"Write response header: "<<this->modified_response_data<<std::endl;
+    //unsigned char temp_buffer[256];
+    //std::size_t blocks = this->modified_response_data.size() / 256;
+    //if (this->modified_response_data.size() % 256 != 0) {
+        //blocks += 1;
+    //}
     //for (std::size_t i = 0; i < blocks; ++i) {
         //std::size_t block_length = 256;
         //if ((i + 1) * 256 > this->modified_response_data.size()) {
@@ -205,8 +229,6 @@ void http_proxy_server_connection::async_write_response_header_to_proxy_client()
         //std::copy(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256]), reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256 + block_length]), temp_buffer);
         //this->encryptor->encrypt(temp_buffer, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 256]), block_length);
     //}
-    this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
-    this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
 }
 
 void http_proxy_server_connection::async_write_data_to_origin_server(const char* write_buffer, std::size_t offset, std::size_t size)
@@ -293,7 +315,7 @@ void http_proxy_server_connection::report_error(const std::string& status_code, 
         response_content += "</center>";
     }
     response_content += "<hr><center>";
-    response_content += "azure http proxy server";
+    response_content += "masa server";
     response_content += "</center></body></html>";
     this->modified_response_data += std::to_string(response_content.size());
     this->modified_response_data += "\r\n";
@@ -303,15 +325,6 @@ void http_proxy_server_connection::report_error(const std::string& status_code, 
         this->modified_response_data += response_content;
     }
     
-    //unsigned char temp_buffer[16];
-    //for (std::size_t i = 0; i * 16 < this->modified_response_data.size(); ++i) {
-        //std::size_t block_length = 16;
-        //if (this->modified_response_data.size() - i * 16 < 16) {
-            //block_length = this->modified_response_data.size() % 16;
-        //}
-        //this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 16]), temp_buffer, block_length);
-        //std::copy(temp_buffer, temp_buffer + block_length, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 16]));
-    //}
     this->connection_context.connection_state = proxy_connection_state::report_error;
     auto self(this->shared_from_this());
     this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0 ,this->modified_response_data.size());
@@ -323,7 +336,7 @@ void http_proxy_server_connection::report_authentication_failed()
     content += "<body bgcolor=\"white\"><center><h1>407 Proxy Authentication Required</h1></center><hr><center>azure http proxy server</center></body></html>";
     this->modified_response_data = "HTTP/1.1 407 Proxy Authentication Required\r\n";
     this->modified_response_data += "Server: AzureHttpProxy\r\n";
-    this->modified_response_data += "Proxy-Authenticate: Basic realm=\"AzureHttpProxy\"\r\n";
+    this->modified_response_data += "Proxy-Authenticate: Basic realm=\"masa\"\r\n";
     this->modified_response_data += "Content-Type: text/html\r\n";
     this->modified_response_data += "Connection: Close\r\n";
     this->modified_response_data += "Content-Length: ";
@@ -382,18 +395,18 @@ void http_proxy_server_connection::on_resolved(boost::asio::ip::tcp::resolver::i
     this->connection_context.connection_state = proxy_connection_state::connect_to_origin_server;
     this->set_timer();
     //mythxcq
-    const time_t t = time(NULL);
-    struct tm* current_time = localtime(&t);
-    std::cout<<current_time->tm_hour<<":"
-      <<current_time->tm_min<<":"
-      <<current_time->tm_sec<<"@@"
-      <<(unsigned long)this<<"@@"
-      <<"Resolved: "
-      <<this->request_header->host()
-      //<<this->request_header->port()<<","
-      <<this->request_header->path_and_query()<<","
-      <<this->request_header->method()
-      <<std::endl;
+    //const time_t t = time(NULL);
+    //struct tm* current_time = localtime(&t);
+    //std::cout<<current_time->tm_hour<<":"
+      //<<current_time->tm_min<<":"
+      //<<current_time->tm_sec<<"@@"
+      //<<(unsigned long)this<<"@@"
+      //<<"Resolved: "
+      //<<this->request_header->host()
+      ////<<this->request_header->port()<<","
+      //<<this->request_header->path_and_query()<<","
+      //<<this->request_header->method()
+      //<<std::endl;
 
     this->origin_server_socket.async_connect(endpoint_iterator->endpoint(),
         this->strand.wrap([this, self, endpoint_iterator](const boost::system::error_code& error) mutable {
@@ -446,131 +459,6 @@ void http_proxy_server_connection::on_connect()
 
 void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t bytes_transferred)
 {
-    if (this->connection_context.connection_state == proxy_connection_state::read_cipher_data) {
-        std::copy(this->upgoing_buffer_read.begin(), this->upgoing_buffer_read.begin() + bytes_transferred, std::back_inserter(this->encrypted_cipher_info));
-        if (this->encrypted_cipher_info.size() < this->rsa_pri.modulus_size()) {
-            this->async_read_data_from_proxy_client(1, std::min(static_cast<std::size_t>(this->rsa_pri.modulus_size()) - this->encrypted_cipher_info.size(), BUFFER_LENGTH));
-            return;
-        }
-        assert(this->encrypted_cipher_info.size() == this->rsa_pri.modulus_size());
-        std::vector<unsigned char> decrypted_cipher_info(this->rsa_pri.modulus_size());
-
-        if (86 != this->rsa_pri.decrypt(this->rsa_pri.modulus_size(), this->encrypted_cipher_info.data(), decrypted_cipher_info.data(), rsa_padding::pkcs1_oaep_padding)) {
-            return;
-        }
-
-        if (decrypted_cipher_info[0] != 'A' ||
-            decrypted_cipher_info[1] != 'H' ||
-            decrypted_cipher_info[2] != 'P' ||
-            decrypted_cipher_info[3] != 0 ||
-            decrypted_cipher_info[4] != 0 ||
-            decrypted_cipher_info[6] != 0
-            ) {
-            return;
-        }
-
-        // 5 cipher code
-
-        // 0x00 aes-128-cfb
-        // 0x01 aes-128-cfb8
-        // 0x02 aes-128-cfb1
-        // 0x03 aes-128-ofb
-        // 0x04 aes-128-ctr
-        // 0x05 aes-192-cfb
-        // 0x06 aes-192-cfb8
-        // 0x07 aes-192-cfb1
-        // 0x08 aes-192-ofb
-        // 0x09 aes-192-ctr
-        // 0x0A aes-256-cfb
-        // 0x0B aes-256-cfb8
-        // 0x0C aes-256-cfb1
-        // 0x0D aes-256-ofb
-        // 0x0E aes-256-ctr
-        unsigned char cipher_code = decrypted_cipher_info[5];
-        if (cipher_code == '\x00' || cipher_code == '\x05' || cipher_code == '\x0A') {
-            // aes-xxx-cfb
-            std::size_t ivec_size = 16;
-            std::size_t key_bits = 256; // aes-256-cfb
-            if (cipher_code == '\x00') {
-                // aes-128-cfb
-                key_bits = 128;
-            }
-            else if (cipher_code == '\x05') {
-                // aes-192-cfb
-                key_bits = 192;
-            }
-            this->encryptor = std::unique_ptr<stream_encryptor>(new aes_cfb128_encryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-            this->decryptor = std::unique_ptr<stream_decryptor>(new aes_cfb128_decryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-        }
-        else if (cipher_code == '\x01' || cipher_code == '\x06' || cipher_code == '\x0B') {
-            // ase-xxx-cfb8
-            std::size_t ivec_size = 16;
-            std::size_t key_bits = 256; // aes-256-cfb8
-            if (cipher_code == '\x01') {
-                // aes-128-cfb8
-                key_bits = 128;
-            }
-            else if (cipher_code == '\x06') {
-                // aes-192-cfb8
-                key_bits = 192;
-            }
-            this->encryptor = std::unique_ptr<stream_encryptor>(new aes_cfb8_encryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-            this->decryptor = std::unique_ptr<stream_decryptor>(new aes_cfb8_decryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-        }
-        else if (cipher_code == '\x02' || cipher_code == '\x07' || cipher_code == '\x0C') {
-            // ase-xxx-cfb1
-            std::size_t ivec_size = 16;
-            std::size_t key_bits = 256; // aes-256-cfb1
-            if (cipher_code == '\x02') {
-                // aes-128-cfb1
-                key_bits = 128;
-            }
-            else if (cipher_code == '\x07') {
-                // aes-192-cfb1
-                key_bits = 192;
-            }
-            this->encryptor = std::unique_ptr<stream_encryptor>(new aes_cfb1_encryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-            this->decryptor = std::unique_ptr<stream_decryptor>(new aes_cfb1_decryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-        }
-        else if (cipher_code == '\x03' || cipher_code == '\x08' || cipher_code == '\x0D') {
-            // ase-xxx-ofb
-            std::size_t ivec_size = 16;
-            std::size_t key_bits = 256; // aes-256-ofb
-            if (cipher_code == '\x03') {
-                // aes-128-ofb
-                key_bits = 128;
-            }
-            else if (cipher_code == '\x08') {
-                // aes-192-ofb
-                key_bits = 192;
-            }
-            this->encryptor = std::unique_ptr<stream_encryptor>(new aes_ofb128_encryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-            this->decryptor = std::unique_ptr<stream_decryptor>(new aes_ofb128_decryptor(&decrypted_cipher_info[23], key_bits, &decrypted_cipher_info[7]));
-        }
-        else if (cipher_code == '\x04' || cipher_code == '\x09' || cipher_code == '\x0E') {
-            // ase-xxx-ctr
-            std::size_t ivec_size = 16;
-            std::size_t key_bits = 256; // aes-256-ctr
-            if (cipher_code == '\x04') {
-                // aes-128-ctr
-                key_bits = 128;
-            }
-            else if (cipher_code == '\x09') {
-                // aes-192-ctr
-                key_bits = 192;
-            }
-            std::vector<unsigned char> ivec(ivec_size, 0);
-            this->encryptor = std::unique_ptr<stream_encryptor>(new aes_ctr128_encryptor(&decrypted_cipher_info[23], key_bits, ivec.data()));
-            this->decryptor = std::unique_ptr<stream_decryptor>(new aes_ctr128_decryptor(&decrypted_cipher_info[23], key_bits, ivec.data()));
-        }
-        if (this->encryptor == nullptr || this->decryptor == nullptr) {
-            return;
-        }
-        this->connection_context.connection_state = proxy_connection_state::read_http_request_header;
-        this->async_read_data_from_proxy_client();
-        return;
-    }
-    //assert(this->encryptor != nullptr && this->decryptor != nullptr);
     //this->decryptor->decrypt(reinterpret_cast<const unsigned char*>(&this->upgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->upgoing_buffer_write[0]), bytes_transferred);
     this->upgoing_buffer_write = this->upgoing_buffer_read;
     if (this->connection_context.connection_state == proxy_connection_state::read_http_request_header) {
@@ -851,7 +739,18 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
                 return;
             }
         }
-        this->async_write_response_header_to_proxy_client();
+
+        if(http_proxy_server_config::get_instance().enable_response_filter()
+            && this->response_header->get_header_value("Content-Type")
+            && (*this->response_header->get_header_value("Content-Type")) == ("image/jpeg")
+            && this->read_response_context.content_length
+            && *this->read_response_context.content_length>0){
+          std::cout<<"Need to filter: "<<this->request_header->path_and_query()<<std::endl;
+            this->connection_context.connection_state = proxy_connection_state::wait_for_total_http_response_content;
+            this->async_read_data_from_origin_server();
+        }
+        else
+          this->async_write_response_header_to_proxy_client();
         ////mythxcq
         //const time_t t = time(NULL);
         //struct tm* current_time = localtime(&t);
@@ -872,6 +771,26 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
           //<<mime_type<<", "
           //<<std::endl;
     }
+    else if(this->connection_context.connection_state == proxy_connection_state::wait_for_total_http_response_content){
+      //std::cout<<"Partial data: "<<bytes_transferred<<std::endl;
+      this->response_data.append(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred);
+      this->read_response_context.content_length_has_read += bytes_transferred;
+      //all is read
+      if (this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
+        //filter the response
+        auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
+        std::string response_content(response_content_begin, this->response_data.end());
+
+        std::ofstream jpgfile("filter.jpg", std::ios::binary);
+        jpgfile<<response_content;
+        jpgfile.close();
+
+        this->async_write_response_header_to_proxy_client();
+      }
+      else{
+        this->async_read_data_from_origin_server();
+      }
+    }
     else if (this->connection_context.connection_state == proxy_connection_state::read_http_response_content) {
         if (this->read_response_context.content_length) {
             this->read_response_context.content_length_has_read += bytes_transferred;
@@ -882,12 +801,10 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
             }
         }
         this->connection_context.connection_state = proxy_connection_state::write_http_response_content;
-        //this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->downgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->downgoing_buffer_write[0]), bytes_transferred);
         this->downgoing_buffer_write = this->downgoing_buffer_read;
         this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
     }
     else if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
-        //this->encryptor->encrypt(reinterpret_cast<const unsigned char*>(&this->downgoing_buffer_read[0]), reinterpret_cast<unsigned char*>(&this->downgoing_buffer_write[0]), bytes_transferred);
         this->downgoing_buffer_write = this->downgoing_buffer_read;
         this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
     }

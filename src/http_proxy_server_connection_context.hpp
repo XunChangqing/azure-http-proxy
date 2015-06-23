@@ -25,6 +25,7 @@ enum class proxy_connection_state {
     read_http_request_header,
     write_http_request_header,
     read_http_request_content,
+    wait_for_total_http_response_content,
     write_http_request_content,
     read_http_response_header,
     write_http_response_header,

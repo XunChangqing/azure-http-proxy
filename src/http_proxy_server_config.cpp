@@ -19,7 +19,6 @@ extern "C" {
 #endif
 
 #include "authentication.hpp"
-#include "encrypt.hpp"
 #include "http_proxy_server_config.hpp"
 #include "jsonxx/jsonxx.h"
 
@@ -56,23 +55,10 @@ bool http_proxy_server_config::load_config(const std::string& config_data)
     else {
         this->config_map["listen_port"] = static_cast<unsigned short>(8090);
     }
-    if (!json_obj.has<jsonxx::String>("rsa_private_key")) {
-        std::cerr << "Could not find \"rsa_private_key\" in config or it's value is not a string" << std::endl;
-        return false;
-    }
-    const std::string& rsa_private_key = json_obj.get<jsonxx::String>("rsa_private_key");
-    try {
-        rsa rsa_pri(rsa_private_key);
-        if (rsa_pri.modulus_size() < 128) {
-            std::cerr << "Must use RSA keys of at least 1024 bits" << std::endl;
-            return false;
-        }
-    }
-    catch (const std::exception&) {
-        std::cerr << "The value of rsa_private_key is bad" << std::endl;
-        return false;
-    }
-    this->config_map["rsa_private_key"] = rsa_private_key;
+    //if (!json_obj.has<jsonxx::String>("rsa_private_key")) {
+        //std::cerr << "Could not find \"rsa_private_key\" in config or it's value is not a string" << std::endl;
+        //return false;
+    //}
     if (json_obj.has<jsonxx::Number>("timeout")) {
         int timeout = static_cast<int>(json_obj.get<jsonxx::Number>("timeout"));
         this->config_map["timeout"] = static_cast<unsigned int>(timeout < 30 ? 30 : timeout);
@@ -105,6 +91,27 @@ bool http_proxy_server_config::load_config(const std::string& config_data)
     }
     else {
         this->config_map["auth"] = false;
+    }
+
+    if (json_obj.has<jsonxx::Boolean>("filter_mode")) {
+        this->config_map["filter_mode"] = json_obj.get<jsonxx::Boolean>("filter_mode");
+    }
+    else {
+        this->config_map["filter_mode"] = false;
+    }
+
+    if (json_obj.has<jsonxx::Boolean>("request_bypass")) {
+        this->config_map["request_bypass"] = json_obj.get<jsonxx::Boolean>("request_bypass");
+    }
+    else {
+        this->config_map["request_bypass"] = false;
+    }
+
+    if (json_obj.has<jsonxx::Boolean>("response_filter")) {
+        this->config_map["response_filter"] = json_obj.get<jsonxx::Boolean>("response_filter");
+    }
+    else {
+        this->config_map["response_filter"] = false;
     }
 
     rollback = false;
@@ -180,11 +187,6 @@ unsigned short http_proxy_server_config::get_listen_port() const
     return this->get_config_value<unsigned short>("listen_port");
 }
 
-const std::string& http_proxy_server_config::get_rsa_private_key() const
-{
-    return this->get_config_value<const std::string&>("rsa_private_key");
-}
-
 unsigned int http_proxy_server_config::get_timeout() const
 {
     return this->get_config_value<unsigned int>("timeout");
@@ -198,6 +200,16 @@ unsigned int http_proxy_server_config::get_workers() const
 bool http_proxy_server_config::enable_auth() const
 {
     return this->get_config_value<bool>("auth");
+}
+
+bool http_proxy_server_config::enable_filter_mode() const{
+    return this->get_config_value<bool>("filter_mode");
+}
+bool http_proxy_server_config::enable_request_bypass() const{
+    return this->get_config_value<bool>("request_bypass");
+}
+bool http_proxy_server_config::enable_response_filter() const{
+    return this->get_config_value<bool>("response_filter");
 }
 
 http_proxy_server_config& http_proxy_server_config::get_instance()

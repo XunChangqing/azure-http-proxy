@@ -39,6 +39,9 @@ public:
     unsigned int get_timeout() const;
     unsigned int get_workers() const;
     bool enable_auth() const;
+    bool enable_filter_mode() const;
+    bool enable_request_bypass() const;
+    bool enable_response_filter() const;
 
     static http_proxy_server_config& get_instance();
 };
