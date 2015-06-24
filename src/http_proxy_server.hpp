@@ -9,18 +9,26 @@
 #define AZURE_HTTP_PROXY_SERVER_HPP
 
 #include <boost/asio.hpp>
+#include <boost/optional.hpp>
+#include <boost/chrono.hpp>
 
 namespace azure_proxy {
+using namespace boost;
+using namespace boost::asio;
 
-    class http_proxy_server {
-        boost::asio::io_service& io_service;
-        boost::asio::ip::tcp::acceptor acceptor;
-    public:
-        http_proxy_server(boost::asio::io_service& io_service);
-        void run();
-    private:
-        void start_accept();
-    };
+class http_proxy_server {
+  io_service &network_io_service_;
+  ip::tcp::acceptor acceptor_;
+  io_service &classification_service_;
+
+public:
+  http_proxy_server(io_service &network_io_service,
+                    io_service &classification_service);
+  void run();
+
+private:
+  void start_accept();
+};
 
 } // namespace azure_proxy
 

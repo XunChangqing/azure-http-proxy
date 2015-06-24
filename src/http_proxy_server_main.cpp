@@ -19,7 +19,8 @@ int main()
             std::cout << "Azure Http Proxy Server" << std::endl;
             std::cout << "bind address: " << config.get_bind_address() << ':' << config.get_listen_port() << std::endl;
             boost::asio::io_service io_service;
-            http_proxy_server server(io_service);
+            boost::asio::io_service classification_service;
+            http_proxy_server server(io_service, classification_service);
             server.run();
         }
     }

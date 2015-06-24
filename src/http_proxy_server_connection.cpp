@@ -11,33 +11,39 @@
 #include <cstring>
 #include <fstream>
 #include <boost/regex.hpp>
+#include <boost/bind.hpp>
 
 #include "authentication.hpp"
 #include "http_proxy_server_config.hpp"
 #include "http_proxy_server_connection.hpp"
+#include "porn_classification.hpp"
 
 static const std::size_t MAX_REQUEST_HEADER_LENGTH = 10240;
 static const std::size_t MAX_RESPONSE_HEADER_LENGTH = 10240;
 
 namespace azure_proxy {
+  using namespace boost;
+  using namespace boost::asio;
 
-http_proxy_server_connection::http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket) :
+//http_proxy_server_connection::http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket) :
+ http_proxy_server_connection::http_proxy_server_connection(ip::tcp::socket&& proxy_client_socket, io_service& classification_service):
+   classification_service_(classification_service),
     strand(proxy_client_socket.get_io_service()),
     proxy_client_socket(std::move(proxy_client_socket)),
     origin_server_socket(this->proxy_client_socket.get_io_service()),
     resolver(this->proxy_client_socket.get_io_service()),
     timer(this->proxy_client_socket.get_io_service())
 {
-    this->connection_context.connection_state = proxy_connection_state::read_cipher_data;
 }
 
 http_proxy_server_connection::~http_proxy_server_connection()
 {
+  std::cout<<"destruct connection!\n";
 }
 
-std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(boost::asio::ip::tcp::socket&& client_socket)
+std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(ip::tcp::socket&& client_socket, io_service& classification_service)
 {
-    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket)));
+    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket), classification_service));
 }
 
 void http_proxy_server_connection::start()
@@ -639,6 +645,7 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
     }
 }
 
+
 void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t bytes_transferred)
 {
     if (this->connection_context.connection_state == proxy_connection_state::read_http_response_header) {
@@ -751,25 +758,6 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
         }
         else
           this->async_write_response_header_to_proxy_client();
-        ////mythxcq
-        //const time_t t = time(NULL);
-        //struct tm* current_time = localtime(&t);
-        //std::cout<<current_time->tm_hour<<":"
-          //<<current_time->tm_min<<":"
-          //<<current_time->tm_sec<<"@@"
-          //<<(unsigned long)this<<"@@"
-          //<<"Response: "
-          //<<this->request_header->host()
-          ////<<this->request_header->port()<<","
-          //<<this->request_header->path_and_query()<<","
-          //<<this->request_header->method()
-          //<<std::endl;
-        //auto content_length_value = this->response_header->get_header_value("Content-Length");
-        //auto mime_type = this->response_header->get_header_value("content-type");
-        //std::cout<<"Response: "
-          //<<content_length_value<<", "
-          //<<mime_type<<", "
-          //<<std::endl;
     }
     else if(this->connection_context.connection_state == proxy_connection_state::wait_for_total_http_response_content){
       //std::cout<<"Partial data: "<<bytes_transferred<<std::endl;
@@ -785,7 +773,13 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
         jpgfile<<response_content;
         jpgfile.close();
 
-        this->async_write_response_header_to_proxy_client();
+        std::cout << "invoke porn classify: "<<std::this_thread::get_id()<<std::endl;
+        typedef void (http_proxy_server_connection::*handler_type)(int, std::shared_ptr<http_proxy_server_connection>);
+        std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
+        classification_service_.post(boost::bind(&PornClassify<handler_type>,
+              "jpeg", response_content, this->strand, this, self,  &http_proxy_server_connection::on_classify));
+
+        //this->async_write_response_header_to_proxy_client();
       }
       else{
         this->async_read_data_from_origin_server();
@@ -931,6 +925,12 @@ void http_proxy_server_connection::on_timeout()
         this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
         this->proxy_client_socket.close(ec);
     }
+}
+
+void http_proxy_server_connection::on_classify(int mode, std::shared_ptr<http_proxy_server_connection> self)
+{
+  std::cout << "porn ret: "<<std::this_thread::get_id()<<std::endl;
+  this->async_write_response_header_to_proxy_client();
 }
 
 } // namespace azure_proxy
