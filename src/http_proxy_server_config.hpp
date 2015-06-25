@@ -42,6 +42,7 @@ public:
     bool enable_filter_mode() const;
     bool enable_request_bypass() const;
     bool enable_response_filter() const;
+    const std::string& GetJpegPlaceHolder() const;
 
     static http_proxy_server_config& get_instance();
 };

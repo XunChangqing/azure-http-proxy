@@ -114,6 +114,17 @@ bool http_proxy_server_config::load_config(const std::string& config_data)
         this->config_map["response_filter"] = false;
     }
 
+    //if (json_obj.has<jsonxx::Boolean>("jpeg_place_holder")) {
+      ////std::string jpeg_name = json_obj.get<jsonxx::String>("jpeg_place_holder");
+      ////std::ifstream jpeg_file(jpeg_name, std::ios::binary);
+      ////if(jpeg_file.is_open())
+      ////{
+      ////}
+    //}
+    //else {
+        //this->config_map["response_filter"] = std::string("");
+    //}
+
     rollback = false;
     return true;
 }
@@ -210,6 +221,10 @@ bool http_proxy_server_config::enable_request_bypass() const{
 }
 bool http_proxy_server_config::enable_response_filter() const{
     return this->get_config_value<bool>("response_filter");
+}
+const std::string& http_proxy_server_config::GetJpegPlaceHolder() const
+{
+    return this->get_config_value<const std::string&>("jpeg_place_holder");
 }
 
 http_proxy_server_config& http_proxy_server_config::get_instance()

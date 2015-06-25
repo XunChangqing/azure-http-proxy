@@ -16,6 +16,7 @@
 
 #include "http_header_parser.hpp"
 #include "http_proxy_server_connection_context.hpp"
+#include "picture_classifier.hpp"
 
 namespace azure_proxy {
   using namespace boost;
@@ -24,7 +25,7 @@ namespace azure_proxy {
 const std::size_t BUFFER_LENGTH = 2048;
 
 class http_proxy_server_connection : public std::enable_shared_from_this<http_proxy_server_connection> {
-  io_service& classification_service_;
+  PictureClassifier& picture_classifier_;
     boost::asio::io_service::strand strand;
     boost::asio::ip::tcp::socket proxy_client_socket;
     boost::asio::ip::tcp::socket origin_server_socket;
@@ -44,10 +45,10 @@ class http_proxy_server_connection : public std::enable_shared_from_this<http_pr
     http_proxy_server_connection_read_request_context read_request_context;
     http_proxy_server_connection_read_response_context read_response_context;
 private:
-    http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket, io_service& classification_service);
+    http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier);
 public:
     ~http_proxy_server_connection();
-    static std::shared_ptr<http_proxy_server_connection> create(boost::asio::ip::tcp::socket&& client_socket, io_service& classification_service);
+    static std::shared_ptr<http_proxy_server_connection> create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier);
     void start();
 private:
     void async_read_data_from_proxy_client(std::size_t at_least_size = 1, std::size_t at_most_size = BUFFER_LENGTH);
@@ -72,7 +73,7 @@ private:
     void on_origin_server_data_written();
     void on_error(const boost::system::error_code& error);
     void on_timeout();
-    void on_classify(int mode, std::shared_ptr<http_proxy_server_connection> self);
+    void OnClassify(int mode);
 };
 
 } // namespace azure_proxy

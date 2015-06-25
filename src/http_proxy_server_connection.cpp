@@ -10,13 +10,14 @@
 #include <cassert>
 #include <cstring>
 #include <fstream>
+#include <thread>
 #include <boost/regex.hpp>
 #include <boost/bind.hpp>
 
 #include "authentication.hpp"
 #include "http_proxy_server_config.hpp"
 #include "http_proxy_server_connection.hpp"
-#include "porn_classification.hpp"
+#include "misc.hpp"
 
 static const std::size_t MAX_REQUEST_HEADER_LENGTH = 10240;
 static const std::size_t MAX_RESPONSE_HEADER_LENGTH = 10240;
@@ -26,8 +27,8 @@ namespace azure_proxy {
   using namespace boost::asio;
 
 //http_proxy_server_connection::http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket) :
- http_proxy_server_connection::http_proxy_server_connection(ip::tcp::socket&& proxy_client_socket, io_service& classification_service):
-   classification_service_(classification_service),
+ http_proxy_server_connection::http_proxy_server_connection(ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier):
+   picture_classifier_(picture_classifier),
     strand(proxy_client_socket.get_io_service()),
     proxy_client_socket(std::move(proxy_client_socket)),
     origin_server_socket(this->proxy_client_socket.get_io_service()),
@@ -41,9 +42,9 @@ http_proxy_server_connection::~http_proxy_server_connection()
   std::cout<<"destruct connection!\n";
 }
 
-std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(ip::tcp::socket&& client_socket, io_service& classification_service)
+std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier)
 {
-    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket), classification_service));
+    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket), picture_classifier));
 }
 
 void http_proxy_server_connection::start()
@@ -211,6 +212,7 @@ void http_proxy_server_connection::async_write_response_header_to_proxy_client()
     this->modified_response_data += "\r\n";
 
     for (const auto& header: this->response_header->get_headers_map()) {
+      //std::cout<<std::get<0>(header)<<": "<<std::get<1>(header)<<std::endl;
         this->modified_response_data += std::get<0>(header);
         this->modified_response_data += ": ";
         this->modified_response_data += std::get<1>(header);
@@ -220,21 +222,6 @@ void http_proxy_server_connection::async_write_response_header_to_proxy_client()
     this->modified_response_data.append(response_content_begin, this->response_data.end());
     this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
     this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
-    //mythxcq
-    //std::cout<<"Write response header: "<<this->modified_response_data<<std::endl;
-    //unsigned char temp_buffer[256];
-    //std::size_t blocks = this->modified_response_data.size() / 256;
-    //if (this->modified_response_data.size() % 256 != 0) {
-        //blocks += 1;
-    //}
-    //for (std::size_t i = 0; i < blocks; ++i) {
-        //std::size_t block_length = 256;
-        //if ((i + 1) * 256 > this->modified_response_data.size()) {
-            //block_length = this->modified_response_data.size() % 256;
-        //}
-        //std::copy(reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256]), reinterpret_cast<const unsigned char*>(&this->modified_response_data[i * 256 + block_length]), temp_buffer);
-        //this->encryptor->encrypt(temp_buffer, reinterpret_cast<unsigned char*>(&this->modified_response_data[i * 256]), block_length);
-    //}
 }
 
 void http_proxy_server_connection::async_write_data_to_origin_server(const char* write_buffer, std::size_t offset, std::size_t size)
@@ -769,15 +756,19 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
         auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
         std::string response_content(response_content_begin, this->response_data.end());
 
-        std::ofstream jpgfile("filter.jpg", std::ios::binary);
-        jpgfile<<response_content;
-        jpgfile.close();
-
         std::cout << "invoke porn classify: "<<std::this_thread::get_id()<<std::endl;
-        typedef void (http_proxy_server_connection::*handler_type)(int, std::shared_ptr<http_proxy_server_connection>);
         std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
-        classification_service_.post(boost::bind(&PornClassify<handler_type>,
-              "jpeg", response_content, this->strand, this, self,  &http_proxy_server_connection::on_classify));
+        picture_classifier_.AsyncClassifyPicture("jpeg", response_content,
+              this->strand.wrap([this, self](int mode) {
+                this->OnClassify(mode);
+                })
+              );
+        //picture_classifier_.AsyncClassifyPicture("jpeg", response_content,
+            //([this, self](int mode) {
+             //this->strand.post(boost::bind(&http_proxy_server_connection::OnClassify,
+               //this, self, mode));
+             //})
+            //);
 
         //this->async_write_response_header_to_proxy_client();
       }
@@ -927,10 +918,45 @@ void http_proxy_server_connection::on_timeout()
     }
 }
 
-void http_proxy_server_connection::on_classify(int mode, std::shared_ptr<http_proxy_server_connection> self)
+
+void http_proxy_server_connection::OnClassify(int mode)
 {
   std::cout << "porn ret: "<<std::this_thread::get_id()<<std::endl;
-  this->async_write_response_header_to_proxy_client();
+  auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
+
+  std::string response_content(response_content_begin, this->response_data.end());
+  std::ofstream picfile(UrlEncode(this->request_header->host()+this->request_header->path_and_query()), std::ios::binary);
+  picfile<<response_content;
+  picfile.close();
+
+  this->modified_response_data = "HTTP/";
+  this->modified_response_data += this->response_header->http_version();
+  this->modified_response_data.push_back(' ');
+  this->modified_response_data += std::to_string(this->response_header->status_code());
+  if (!this->response_header->status_description().empty()) {
+    this->modified_response_data.push_back(' ');
+    this->modified_response_data += this->response_header->status_description();
+  }
+  this->modified_response_data += "\r\n";
+
+  //const std::string& jpeg_place_holder = http_proxy_server_config::get_instance().GetJpegPlaceHolder();
+  //if(mode >=0)
+  //this->response_header->SetHeaderValue("Content-Length", std::to_string(jpeg_place_holder.size()));
+  this->response_header->SetHeaderValue("Content-Length", std::to_string(0));
+  for (const auto& header: this->response_header->get_headers_map()) {
+    this->modified_response_data += std::get<0>(header);
+    this->modified_response_data += ": ";
+    this->modified_response_data += std::get<1>(header);
+    this->modified_response_data += "\r\n";
+  }
+  this->modified_response_data += "\r\n";
+  //if(mode >=0)
+  //this->modified_response_data.append(jpeg_place_holder);
+  //else
+  //this->modified_response_data.append(response_content_begin, this->response_data.end());
+  this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
+  this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
+  //this->async_write_response_header_to_proxy_client();
 }
 
 } // namespace azure_proxy

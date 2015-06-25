@@ -93,6 +93,14 @@ boost::optional<std::string> http_response_header::get_header_value(const std::s
     return std::get<1>(*iter);
 }
 
+void http_response_header::SetHeaderValue(const std::string& name, const std::string& value){
+    auto iter = this->_headers_map.find(name);
+    if (iter != this->_headers_map.end()) {
+      iter->second = value;
+      //std::set<1>(*iter, value);
+    }
+}
+
 std::size_t http_response_header::erase_header(const std::string& name)
 {
     return this->_headers_map.erase(name);

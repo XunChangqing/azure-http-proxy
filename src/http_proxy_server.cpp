@@ -22,7 +22,7 @@ using namespace boost::asio;
 http_proxy_server::http_proxy_server(io_service &network_io_service,
                                      io_service &classification_service)
     : network_io_service_(network_io_service), acceptor_(network_io_service),
-      classification_service_(classification_service) {}
+      classification_service_(classification_service), picture_classifier_(classification_service) {}
 
 void http_proxy_server::run() {
   const auto &config = http_proxy_server_config::get_instance();
@@ -79,7 +79,7 @@ void http_proxy_server::start_accept() {
         if (!error) {
           // std::cout<< "new connection!\n";
           auto connection = http_proxy_server_connection::create(
-              std::move(*socket), classification_service_);
+              std::move(*socket), picture_classifier_);
           connection->start();
           this->start_accept();
         }

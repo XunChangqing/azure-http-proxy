@@ -60,6 +60,7 @@ public:
     unsigned int status_code() const;
     const std::string& status_description() const;
     boost::optional<std::string> get_header_value(const std::string& name) const;
+    void SetHeaderValue(const std::string& name, const std::string& value);
     std::size_t erase_header(const std::string& name);
     const http_headers_container& get_headers_map() const;
 };
