@@ -13,6 +13,8 @@
 #include <thread>
 #include <boost/regex.hpp>
 #include <boost/bind.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
 
 #include "authentication.hpp"
 #include "http_proxy_server_config.hpp"
@@ -39,7 +41,7 @@ namespace azure_proxy {
 
 http_proxy_server_connection::~http_proxy_server_connection()
 {
-  std::cout<<"destruct connection!\n";
+  //std::cout<<"destruct connection!\n";
 }
 
 std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier)
@@ -109,9 +111,10 @@ void http_proxy_server_connection::async_connect_to_origin_server()
         }
     }
 
-    if (this->origin_server_socket.is_open() &&
-        this->request_header->host() == this->connection_context.origin_server_name &&
-        this->request_header->port() == this->connection_context.origin_server_port) {
+    if (this->origin_server_socket.is_open() &&(
+        (this->request_header->host() == this->connection_context.origin_server_name &&
+        this->request_header->port() == this->connection_context.origin_server_port)||
+        (http_proxy_server_config::get_instance().enable_filter_mode()))) {
         this->connection_context.reconnect_on_error = true;
         this->on_connect();
     }
@@ -635,7 +638,9 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
 
 void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t bytes_transferred)
 {
+  //std::cout<<"origin_server_data_arrived: "<<bytes_transferred<<std::endl;
     if (this->connection_context.connection_state == proxy_connection_state::read_http_response_header) {
+      //std::cout<<"origin_server_data_arrived read_http_response_header"<<std::endl;
         this->response_data.append(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred);
         auto double_crlf_pos = this->response_data.find("\r\n\r\n");
         if (double_crlf_pos == std::string::npos) {
@@ -648,6 +653,7 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
             return;
         }
 
+        //std::cout<<"header end pos: "<<double_crlf_pos<<std::endl;
         this->response_header = http_header_parser::parse_response_header(this->response_data.begin(), this->response_data.begin() + double_crlf_pos + 4);
         if (!this->response_header) {
             this->report_error("502", "Bad Gateway", "Failed to parse response header");
@@ -739,7 +745,7 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
             && (*this->response_header->get_header_value("Content-Type")) == ("image/jpeg")
             && this->read_response_context.content_length
             && *this->read_response_context.content_length>0){
-          std::cout<<"Need to filter: "<<this->request_header->path_and_query()<<std::endl;
+          //std::cout<<"Need to filter: "<<this->request_header->path_and_query()<<"length"<<*this->read_response_context.content_length<<std::endl;
             this->connection_context.connection_state = proxy_connection_state::wait_for_total_http_response_content;
             this->async_read_data_from_origin_server();
         }
@@ -754,11 +760,30 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
       if (this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
         //filter the response
         auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
-        std::string response_content(response_content_begin, this->response_data.end());
+        std::string response_content_data(response_content_begin, this->response_data.end());
 
-        std::cout << "invoke porn classify: "<<std::this_thread::get_id()<<std::endl;
+        //if content-encoding == gzip, decompress
+        if(this->response_header->get_header_value("Content-Encoding") &&
+            *this->response_header->get_header_value("Content-Encoding") == "gzip"){
+          std::string decompressed;
+          boost::iostreams::filtering_ostream os;
+          os.push(boost::iostreams::gzip_decompressor());
+          os.push(boost::iostreams::back_inserter(decompressed));
+
+          boost::iostreams::write(os, response_content_data.data(), response_content_data.size());
+          os.reset();
+          response_content_data = std::move(decompressed);
+          //std::cout<<"Decompressed: "<<response_content_data.size()<<std::endl;
+        }
+
+        std::string response_content(response_content_begin, this->response_data.end());
+        std::ofstream picfile("images/"+UrlEncode(this->request_header->host()+this->request_header->path_and_query()), std::ios::binary);
+        picfile<<response_content;
+        picfile.close();
+
+        //std::cout << "invoke porn classify: "<<std::this_thread::get_id()<<std::endl;
         std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
-        picture_classifier_.AsyncClassifyPicture("jpeg", response_content,
+        picture_classifier_.AsyncClassifyPicture("jpeg", response_content_data,
               this->strand.wrap([this, self](int mode) {
                 this->OnClassify(mode);
                 })
@@ -777,6 +802,7 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
       }
     }
     else if (this->connection_context.connection_state == proxy_connection_state::read_http_response_content) {
+      //std::cout<<"origin_server_data_arrived read_http_response_content"<<std::endl;
         if (this->read_response_context.content_length) {
             this->read_response_context.content_length_has_read += bytes_transferred;
         }
@@ -921,13 +947,12 @@ void http_proxy_server_connection::on_timeout()
 
 void http_proxy_server_connection::OnClassify(int mode)
 {
-  std::cout << "porn ret: "<<std::this_thread::get_id()<<std::endl;
+  //std::cout << "porn ret: "<<std::this_thread::get_id()<<" result: "<<mode<<std::endl;
+  if(mode == 1){
+    std::cout <<"Porn: "<<this->request_header->host()<<this->request_header->path_and_query()
+      <<"encoded url: "<<UrlEncode(this->request_header->host()+this->request_header->path_and_query())<<std::endl;
+  }
   auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
-
-  std::string response_content(response_content_begin, this->response_data.end());
-  std::ofstream picfile(UrlEncode(this->request_header->host()+this->request_header->path_and_query()), std::ios::binary);
-  picfile<<response_content;
-  picfile.close();
 
   this->modified_response_data = "HTTP/";
   this->modified_response_data += this->response_header->http_version();
@@ -939,10 +964,12 @@ void http_proxy_server_connection::OnClassify(int mode)
   }
   this->modified_response_data += "\r\n";
 
-  //const std::string& jpeg_place_holder = http_proxy_server_config::get_instance().GetJpegPlaceHolder();
+  const std::string& jpeg_place_holder = http_proxy_server_config::get_instance().GetJpegPlaceHolder();
   //if(mode >=0)
   //this->response_header->SetHeaderValue("Content-Length", std::to_string(jpeg_place_holder.size()));
-  this->response_header->SetHeaderValue("Content-Length", std::to_string(0));
+  if(mode == 1){
+    this->response_header->SetHeaderValue("Content-Length", std::to_string(jpeg_place_holder.size()));
+  }
   for (const auto& header: this->response_header->get_headers_map()) {
     this->modified_response_data += std::get<0>(header);
     this->modified_response_data += ": ";
@@ -950,10 +977,10 @@ void http_proxy_server_connection::OnClassify(int mode)
     this->modified_response_data += "\r\n";
   }
   this->modified_response_data += "\r\n";
-  //if(mode >=0)
-  //this->modified_response_data.append(jpeg_place_holder);
-  //else
-  //this->modified_response_data.append(response_content_begin, this->response_data.end());
+  if(mode ==1)
+    this->modified_response_data.append(jpeg_place_holder);
+  else
+    this->modified_response_data.append(response_content_begin, this->response_data.end());
   this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
   this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
   //this->async_write_response_header_to_proxy_client();

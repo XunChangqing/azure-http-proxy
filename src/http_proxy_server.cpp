@@ -26,6 +26,9 @@ http_proxy_server::http_proxy_server(io_service &network_io_service,
 
 void http_proxy_server::run() {
   const auto &config = http_proxy_server_config::get_instance();
+
+  picture_classifier_.LoadModel(config.GetDeployProto(), config.GetModel(), config.GetMean());
+  
   boost::asio::ip::tcp::endpoint endpoint(
       boost::asio::ip::address::from_string(config.get_bind_address()),
       config.get_listen_port());
@@ -51,7 +54,7 @@ void http_proxy_server::run() {
 
   std::vector<std::thread> back_td_vec;
 
-  for (auto i = 0u; i < config.get_workers(); ++i) {
+  for (auto i = 0u; i < 1; ++i) {
     back_td_vec.emplace_back([this]() {
       try {
         this->classification_service_.run();

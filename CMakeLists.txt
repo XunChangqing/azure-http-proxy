@@ -4,14 +4,18 @@ project(azure-http-proxy)
 set(Boost_USE_MULTITHREAD ON)
 
 #find_package(Boost REQUIRED COMPONENTS system regex thread)
-find_package(Boost REQUIRED COMPONENTS system regex)
-find_package(OpenSSL REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system regex iostreams)
+find_package(Caffe)
+#find_package(OpenSSL REQUIRED)
 
 include_directories(${Boost_INCLUDE_DIR})
 link_directories(${Boost_LIBRARY_DIR})
 
-include_directories(${OPENSSL_INCLUDE_DIR})
-link_directories(${OPENSSL_LIBRARY_DIR})
+include_directories(${Caffe_INCLUDE_DIRS})
+add_definitions(${Caffe_DEFINITIONS})    # ex. -DCPU_ONLY
+
+#include_directories(${OPENSSL_INCLUDE_DIR})
+#link_directories(${OPENSSL_LIBRARY_DIR})
 
 set(CMAKE_CXX_FLAGS " -O3 ")
 
@@ -27,7 +31,7 @@ endif()
 
 add_executable(ahps src/http_proxy_server_main.cpp src/http_proxy_server.cpp src/http_proxy_server_config.cpp src/http_proxy_server_connection.cpp src/http_header_parser.cpp src/base64.cpp src/authentication.cpp src/picture_classifier.cpp src/misc.cpp src/jsonxx/jsonxx.cc)
 #target_link_libraries(ahps ${Boost_SYSTEM_LIBRARY} ${Boost_REGEX_LIBRARY}  ${Boost_THREAD_LIBRARY} ${OPENSSL_LIBRARIES})
-target_link_libraries(ahps ${Boost_SYSTEM_LIBRARY} ${Boost_REGEX_LIBRARY}  ${OPENSSL_LIBRARIES})
+target_link_libraries(ahps ${Boost_SYSTEM_LIBRARY} ${Boost_REGEX_LIBRARY} ${Boost_IOSTREAMS_LIBRARY} ${Caffe_LIBRARIES})
 
 #if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   #target_link_libraries(ahpc atomic)

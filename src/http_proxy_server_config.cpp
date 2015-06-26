@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <fstream>
+#include <sstream>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -114,16 +115,22 @@ bool http_proxy_server_config::load_config(const std::string& config_data)
         this->config_map["response_filter"] = false;
     }
 
-    //if (json_obj.has<jsonxx::Boolean>("jpeg_place_holder")) {
-      ////std::string jpeg_name = json_obj.get<jsonxx::String>("jpeg_place_holder");
-      ////std::ifstream jpeg_file(jpeg_name, std::ios::binary);
-      ////if(jpeg_file.is_open())
-      ////{
-      ////}
-    //}
-    //else {
-        //this->config_map["response_filter"] = std::string("");
-    //}
+    std::string jpeg_name = "p/jpeg_place_holder.jpg";
+    std::ifstream jpeg_file(jpeg_name, std::ios::binary);
+    if(jpeg_file.is_open())
+    {
+      std::ostringstream jpeg_ostr;
+      jpeg_ostr << jpeg_file.rdbuf();
+      jpeg_file.close();
+      std::cout<<"jpeg file size: "<<jpeg_ostr.str().size()<<std::endl;
+      this->config_map["jpeg_place_holder"] = jpeg_ostr.str();
+    }
+    else
+      std::cout<<"Can not open jpeg place holder file!"<<std::endl;
+
+    this->config_map["caffe_deploy_proto"] = std::string("nin/deploy.prototxt");
+    this->config_map["caffe_model"] = std::string("nin/model_20150615_2_256_iter_20000.caffemodel");
+    this->config_map["caffe_mean"] = std::string("nin/imagenet_mean.binaryproto");
 
     rollback = false;
     return true;
@@ -225,6 +232,15 @@ bool http_proxy_server_config::enable_response_filter() const{
 const std::string& http_proxy_server_config::GetJpegPlaceHolder() const
 {
     return this->get_config_value<const std::string&>("jpeg_place_holder");
+}
+const std::string& http_proxy_server_config::GetDeployProto() const{
+    return this->get_config_value<const std::string&>("caffe_deploy_proto");
+}
+const std::string& http_proxy_server_config::GetModel() const{
+    return this->get_config_value<const std::string&>("caffe_model");
+}
+const std::string& http_proxy_server_config::GetMean() const{
+    return this->get_config_value<const std::string&>("caffe_mean");
 }
 
 http_proxy_server_config& http_proxy_server_config::get_instance()

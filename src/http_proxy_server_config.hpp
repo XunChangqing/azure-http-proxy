@@ -12,6 +12,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <iostream>
 
 #include <boost/any.hpp>
 
@@ -25,6 +26,7 @@ private:
         assert(!this->config_map.empty());
         auto iter = this->config_map.find(key);
         if (iter == this->config_map.end()) {
+          std::cout<<key;
             throw std::invalid_argument("invalid argument");
         }
         return boost::any_cast<T>(iter->second);
@@ -43,6 +45,9 @@ public:
     bool enable_request_bypass() const;
     bool enable_response_filter() const;
     const std::string& GetJpegPlaceHolder() const;
+    const std::string& GetDeployProto() const;
+    const std::string& GetModel() const;
+    const std::string& GetMean() const;
 
     static http_proxy_server_config& get_instance();
 };
