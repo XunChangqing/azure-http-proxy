@@ -1,20 +1,22 @@
 #ifndef HEADER_PICTURE_CLASSIFIER
 #define HEADER_PICTURE_CLASSIFIER
 
-#include <caffe/caffe.hpp>
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
 #include <iosfwd>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+
+//#include <caffe/caffe.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
 #include <boost/asio.hpp>
 #include <boost/optional.hpp>
-
+namespace caffe { template <typename Dtype> class Net; }
 namespace azure_proxy {
-  using namespace caffe;
+	
   using std::string;
 class PictureClassifier {
   boost::asio::io_service &classification_service_;
@@ -36,7 +38,7 @@ private:
   void Preprocess(const cv::Mat &img, std::vector<cv::Mat> *input_channels);
 
 private:
-  std::shared_ptr<Net<float>> net_;
+  std::shared_ptr<caffe::Net<float>> net_;
   cv::Size input_geometry_;
   int num_channels_;
   cv::Mat mean_;

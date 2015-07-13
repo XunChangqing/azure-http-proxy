@@ -1,8 +1,9 @@
 #include <thread>
 #include <boost/bind.hpp>
-
+#include <caffe/caffe.hpp>
 #include "picture_classifier.hpp"
 namespace azure_proxy {
+	using namespace caffe;
 
 PictureClassifier::PictureClassifier(
     boost::asio::io_service &classification_service)
@@ -12,13 +13,9 @@ PictureClassifier::PictureClassifier(
 bool PictureClassifier::LoadModel(const std::string &model_file,
                                   const std::string &trained_file,
                                   const std::string &mean_file) {
-#ifdef CPU_ONLY
   Caffe::set_mode(Caffe::CPU);
-#else
-  Caffe::set_mode(Caffe::GPU);
-#endif
   /* Load the network. */
-  net_.reset(new Net<float>(model_file, TEST));
+  net_.reset(new Net<float>(model_file, TEST)); //, TEST
   net_->CopyTrainedLayersFrom(trained_file);
 
   CHECK_EQ(net_->num_inputs(), 1) << "Network should have exactly one input.";
@@ -43,6 +40,7 @@ bool PictureClassifier::LoadModel(const std::string &model_file,
   Blob<float> *output_layer = net_->output_blobs()[0];
   // CHECK_EQ(labels_.size(), output_layer->channels())
   //<< "Number of labels is different from the output layer dimension.";
+	return true;
 }
 
 static bool PairCompare(const std::pair<float, int> &lhs,
@@ -112,6 +110,7 @@ void PictureClassifier::SetMean(const string &mean_file) {
 
 std::vector<float> PictureClassifier::Predict(const cv::Mat &img) {
   Blob<float> *input_layer = net_->input_blobs()[0];
+
   input_layer->Reshape(1, num_channels_, input_geometry_.height,
                        input_geometry_.width);
   /* Forward dimension change to all layers. */
