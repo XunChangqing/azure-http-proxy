@@ -80,9 +80,9 @@ void http_proxy_server::start_accept() {
   acceptor_.async_accept(
       *socket, [socket, this](const system::error_code &error) {
         if (!error) {
-          // std::cout<< "new connection!\n";
+           //std::cout<< "new connection!\n";
           auto connection = http_proxy_server_connection::create(
-              std::move(*socket), picture_classifier_);
+              std::move(*socket), picture_classifier_, server_context_);
           connection->start();
           this->start_accept();
         }

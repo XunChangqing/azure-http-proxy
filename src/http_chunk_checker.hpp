@@ -32,9 +32,11 @@ class http_chunk_checker {
     http_chunk_check_state state;
     std::uint32_t current_chunk_size;
     std::uint32_t current_chunk_size_has_read;
+	std::string data_;
 public:
     http_chunk_checker() : state(http_chunk_check_state::chunk_size_start), current_chunk_size(0), current_chunk_size_has_read(0) {}
 
+	std::string  GetData() const { return data_; }
     bool is_complete() const {
         return this->state == http_chunk_check_state::chunk_complete;
     }
@@ -92,6 +94,8 @@ public:
                     break;
                 case http_chunk_check_state::chunk_data:
                     if (this->current_chunk_size_has_read < this->current_chunk_size) {
+						data_+=(*iter);
+						//data_.append('c');
                         ++this->current_chunk_size_has_read;
                         continue;
                     }

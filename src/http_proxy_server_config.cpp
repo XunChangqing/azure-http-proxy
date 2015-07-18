@@ -115,7 +115,7 @@ bool http_proxy_server_config::load_config(const std::string& config_data)
         this->config_map["response_filter"] = false;
     }
 
-    std::string jpeg_name = "p/jpeg_place_holder.jpg";
+    std::string jpeg_name = "nin/jpeg_place_holder.jpg";
     std::ifstream jpeg_file(jpeg_name, std::ios::binary);
     if(jpeg_file.is_open())
     {

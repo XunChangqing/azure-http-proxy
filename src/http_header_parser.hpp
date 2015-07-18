@@ -17,6 +17,7 @@
 
 namespace azure_proxy {
 
+//key string case insensitive map
 struct default_filed_name_compare {
     bool operator() (const std::string& str1, const std::string& str2) const {
         return std::lexicographical_compare(str1.begin(), str1.end(), str2.begin(), str2.end(), [](const char ch1, const char ch2) -> bool {

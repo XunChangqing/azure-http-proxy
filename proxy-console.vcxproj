@@ -37,8 +37,8 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>C:\Program Files %28x86%29\Intel\Composer XE 2015\mkl\include;D:\installed_libraries\opencv2410-dynamic-runtime\include;D:\installed_libraries\Boost-1.55-x86\include;D:\gitwork\caffe\src;D:\gitwork\caffe\include;D:\gitwork\caffe\3rdparty\include\openblas;D:\gitwork\caffe\3rdparty\include\hdf5;D:\gitwork\caffe\3rdparty\include;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Program Files %28x86%29\Intel\Composer XE 2015\mkl\lib\ia32;C:\Program Files %28x86%29\Intel\Composer XE 2015\compiler\lib\ia32;D:\installed_libraries\opencv2410-dynamic-runtime\x86\vc12\staticlib;D:\installed_libraries\Boost-1.55-x86\lib;D:\gitwork\caffe\3rdparty\libx86;$(LibraryPath)</LibraryPath>
+    <IncludePath>D:\gitwork\azure-http-proxy\thirdparty\include\sqlite3;D:\gitwork\azure-http-proxy\thirdparty\include\gumbo;D:\gitwork\azure-http-proxy\thirdparty\include;C:\Program Files %28x86%29\Intel\Composer XE 2015\mkl\include;D:\installed_libraries\opencv2410-dynamic-runtime\include;D:\installed_libraries\Boost-1.55-x86\include;D:\gitwork\caffe\src;D:\gitwork\caffe\include;D:\gitwork\caffe\3rdparty\include\openblas;D:\gitwork\caffe\3rdparty\include\hdf5;D:\gitwork\caffe\3rdparty\include;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\gitwork\azure-http-proxy\thirdparty\lib;C:\Program Files %28x86%29\Intel\Composer XE 2015\mkl\lib\ia32;C:\Program Files %28x86%29\Intel\Composer XE 2015\compiler\lib\ia32;D:\installed_libraries\opencv2410-dynamic-runtime\x86\vc12\staticlib;D:\installed_libraries\Boost-1.55-x86\lib;D:\gitwork\caffe\3rdparty\libx86;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>true</LinkIncremental>
@@ -59,7 +59,7 @@
       <TargetMachine>MachineX86</TargetMachine>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>libiomp5md.lib;mkl_core.lib;mkl_intel_c.lib;mkl_intel_thread.lib;mkl_sequential.lib;libhdf5_D.lib;libhdf5_hl_D.lib;leveldbd.lib;libglog_staticd.lib;libprotobufd.lib;IlmImfd.lib;libjasperd.lib;libjpegd.lib;libpngd.lib;libtiffd.lib;zlibd.lib;opencv_core2410d.lib;opencv_highgui2410d.lib;opencv_imgproc2410d.lib;opencv_objdetect2410d.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>sqlite3_d.lib;gumbo_d.lib;libiomp5md.lib;mkl_core.lib;mkl_intel_c.lib;mkl_intel_thread.lib;mkl_sequential.lib;libhdf5_D.lib;libhdf5_hl_D.lib;leveldbd.lib;libglog_staticd.lib;libprotobufd.lib;IlmImfd.lib;libjasperd.lib;libjpegd.lib;libpngd.lib;libtiffd.lib;zlibd.lib;opencv_core2410d.lib;opencv_highgui2410d.lib;opencv_imgproc2410d.lib;opencv_objdetect2410d.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ProjectReference>
       <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
@@ -95,6 +95,7 @@
     <ClCompile Include="src\http_proxy_server_main.cpp" />
     <ClCompile Include="src\jsonxx\jsonxx.cc" />
     <ClCompile Include="src\misc.cpp" />
+    <ClCompile Include="src\parse_domain.cpp" />
     <ClCompile Include="src\picture_classifier.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</ExcludedFromBuild>
     </ClCompile>
@@ -111,6 +112,7 @@
     <ClInclude Include="src\jsonxx\jsonxx.h" />
     <ClInclude Include="src\key_generator.hpp" />
     <ClInclude Include="src\misc.hpp" />
+    <ClInclude Include="src\parse_domain.hpp" />
     <ClInclude Include="src\picture_classifier.hpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</ExcludedFromBuild>
     </ClInclude>

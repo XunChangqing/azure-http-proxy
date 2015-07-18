@@ -55,6 +55,8 @@ struct http_proxy_server_connection_read_response_context {
     boost::optional<std::uint64_t> content_length;
     std::uint64_t content_length_has_read;
     boost::optional<http_chunk_checker> chunk_checker;
+	boost::optional<std::string> content_type;
+	boost::optional<std::string> content_encoding;
 };
 
 } // namespace azure_proxy

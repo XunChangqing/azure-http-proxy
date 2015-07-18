@@ -2,6 +2,7 @@
 #include <boost/bind.hpp>
 #include <caffe/caffe.hpp>
 #include "picture_classifier.hpp"
+
 namespace azure_proxy {
 	using namespace caffe;
 
@@ -190,27 +191,52 @@ void PictureClassifier::Preprocess(const cv::Mat &img,
 
 void PictureClassifier::AsyncClassifyPicture(std::string format,
                                              std::string picture,
-                                             std::function<void(int)> handler) {
+                                             std::function<void(std::string, bool)> handler) {
   classification_service_.post(boost::bind(&PictureClassifier::ClassifyPicture,
                                            this, format, picture, handler));
 }
 
+const int kMinWidth = 200;
+const int kMinHeigth = 200;
 void PictureClassifier::ClassifyPicture(std::string format, std::string picture,
-                                        std::function<void(int)> handler) {
+                                        std::function<void(std::string, bool)> handler) {
   //std::cout << "porn classify: " << std::this_thread::get_id() << std::endl;
   // cv::Mat img = cv::imread(file, -1);
   std::vector<char> picdata(picture.begin(), picture.end());
   cv::Mat img = cv::imdecode(cv::Mat(picdata), -1);
-  if (img.empty()) {
-    std::cout << "Unable to decode image " << std::endl;
-    handler(-1);
-    return;
+  if (img.empty() ||
+	  img.cols < kMinWidth ||
+	  img.rows < kMinHeigth) {
+	  //std::cout << "Unable to decode image or too small!" << std::endl;
+	  LOG(INFO) << "Unable to decode image or too small!";
+	  handler(picture, false);
+	  return;
   }
   // CHECK(!img.empty()) << "Unable to decode image " << picture;
   // std::vector<Prediction> predictions = classifier.Classify(img, 2);
   std::vector<float> output = Predict(img);
   std::vector<int> maxN = Argmax(output, 1);
   //std::cout << "Porn classify result: " << maxN[0] << std::endl;
-  handler(maxN[0]);
+  //handler(maxN[0]);
+  if (maxN[0] == 1){//porn
+	  //draw tag on the picture
+	  cv::blur(img, img, cv::Size(5, 5));
+	  cv::rectangle(img, cv::Rect(0, 0, img.cols, img.rows), cv::Scalar(0, 0, 255), (float)img.cols*0.1f);
+	  //encode to jpeg
+	  size_t pos;
+	  std::string postfix = ".jpg";
+	  if ((pos = format.rfind('/')) != std::string::npos){
+		  //std::string postfix(input, pos, input.size());
+		  postfix.replace(1, std::string::npos, format.substr(pos + 1, std::string::npos));
+		  //postfix[0] = '.';
+		  //std::cout << postfix << std::endl;
+	  }
+	  std::vector<uchar> obuf;
+	  cv::imencode(postfix, img, obuf);
+	  std::string oimg(obuf.begin(), obuf.end());
+	  handler(oimg, true);
+  }
+  else
+	  handler(picture, false);
 }
 }

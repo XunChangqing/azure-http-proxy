@@ -11,12 +11,15 @@
 #include <array>
 #include <chrono>
 
+#include <boost/thread.hpp>
 #include <boost/asio.hpp>
 #include <boost/optional.hpp>
 
 #include "http_header_parser.hpp"
 #include "http_proxy_server_connection_context.hpp"
+#include "http_proxy_server.hpp"
 #include "picture_classifier.hpp"
+#include "parse_domain.hpp"
 
 namespace azure_proxy {
   using namespace boost;
@@ -26,6 +29,9 @@ const std::size_t BUFFER_LENGTH = 2048;
 
 class http_proxy_server_connection : public std::enable_shared_from_this<http_proxy_server_connection> {
   PictureClassifier& picture_classifier_;
+  http_proxy_server_context& server_context_;
+  tldnode          *tree;
+
     boost::asio::io_service::strand strand;
     boost::asio::ip::tcp::socket proxy_client_socket;
     boost::asio::ip::tcp::socket origin_server_socket;
@@ -45,10 +51,10 @@ class http_proxy_server_connection : public std::enable_shared_from_this<http_pr
     http_proxy_server_connection_read_request_context read_request_context;
     http_proxy_server_connection_read_response_context read_response_context;
 private:
-    http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier);
+    http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier, http_proxy_server_context &server_context);
 public:
     ~http_proxy_server_connection();
-    static std::shared_ptr<http_proxy_server_connection> create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier);
+    static std::shared_ptr<http_proxy_server_connection> create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier, http_proxy_server_context& server_context);
     void start();
 private:
     void async_read_data_from_proxy_client(std::size_t at_least_size = 1, std::size_t at_most_size = BUFFER_LENGTH);
@@ -73,7 +79,12 @@ private:
     void on_origin_server_data_written();
     void on_error(const boost::system::error_code& error);
     void on_timeout();
-    void OnClassify(int mode);
+    void OnClassify(std::string, bool);
+
+	//helpers
+	std::string Decompress(std::string);
+	std::string Compress(std::string);
+	std::string BuildRequestUrl();
 };
 
 } // namespace azure_proxy

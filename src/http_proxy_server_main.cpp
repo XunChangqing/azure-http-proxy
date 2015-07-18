@@ -9,7 +9,8 @@
 
 #include "http_proxy_server_config.hpp"
 #include "http_proxy_server.hpp"
-#include <caffe/caffe.hpp>
+#include "glog/logging.h"
+
 
 int main(int argc, char **argv) {
   using namespace azure_proxy;

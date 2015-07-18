@@ -15,11 +15,17 @@
 #include <boost/bind.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
+#include <boost/algorithm/string.hpp>
+
+#include "GLOG/logging.h"
+#include "gumbo.h"
 
 #include "authentication.hpp"
 #include "http_proxy_server_config.hpp"
 #include "http_proxy_server_connection.hpp"
 #include "misc.hpp"
+
+#include "data/tld_tree.c"
 
 static const std::size_t MAX_REQUEST_HEADER_LENGTH = 10240;
 static const std::size_t MAX_RESPONSE_HEADER_LENGTH = 10240;
@@ -29,24 +35,27 @@ namespace azure_proxy {
   using namespace boost::asio;
 
 //http_proxy_server_connection::http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket) :
- http_proxy_server_connection::http_proxy_server_connection(ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier):
+ http_proxy_server_connection::http_proxy_server_connection(ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier, http_proxy_server_context& server_context):
    picture_classifier_(picture_classifier),
+   server_context_(server_context),
     strand(proxy_client_socket.get_io_service()),
     proxy_client_socket(std::move(proxy_client_socket)),
     origin_server_socket(this->proxy_client_socket.get_io_service()),
     resolver(this->proxy_client_socket.get_io_service()),
     timer(this->proxy_client_socket.get_io_service())
 {
+	tree = init_tld_tree(tld_string);
 }
 
 http_proxy_server_connection::~http_proxy_server_connection()
 {
   //std::cout<<"destruct connection!\n";
+	free_tld_tree(tree);
 }
 
-std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier)
+std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier, http_proxy_server_context& server_context)
 {
-    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket), picture_classifier));
+    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket), picture_classifier, server_context));
 }
 
 void http_proxy_server_connection::start()
@@ -635,355 +644,545 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
     }
 }
 
+const char* kJpegType = "image/jpeg";
+const char* kPngType = "image/png";
+const char* kHtmlType = "text/html";
+const char* kGzipEncoding = "gzip";
+const int kMaxHtmlBufferSize = 50;
+
+
+static void search_for_links(GumboNode* node, std::set<std::string> &srclist) {
+  if (node->type != GUMBO_NODE_ELEMENT) {
+    return;
+  }
+  GumboAttribute* src;
+  if (node->v.element.tag == GUMBO_TAG_IMG &&
+      (src = gumbo_get_attribute(&node->v.element.attributes, "src"))) {
+	  srclist.insert(std::string(src->value));
+    //std::cout << src->value << std::endl;
+  }
+
+  GumboVector* children = &node->v.element.children;
+  for (unsigned int i = 0; i < children->length; ++i) {
+    search_for_links(static_cast<GumboNode*>(children->data[i]), srclist);
+  }
+}
 
 void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t bytes_transferred)
 {
-  //std::cout<<"origin_server_data_arrived: "<<bytes_transferred<<std::endl;
-    if (this->connection_context.connection_state == proxy_connection_state::read_http_response_header) {
-      //std::cout<<"origin_server_data_arrived read_http_response_header"<<std::endl;
-        this->response_data.append(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred);
-        auto double_crlf_pos = this->response_data.find("\r\n\r\n");
-        if (double_crlf_pos == std::string::npos) {
-            if (this->response_data.size() < MAX_RESPONSE_HEADER_LENGTH) {
-                this->async_read_data_from_origin_server();
-            }
-            else {
-                this->report_error("502", "Bad Gateway", "Response header too long");
-            }
-            return;
-        }
+	auto string_to_lower_case = [](std::string& str) {
+		for (auto iter = str.begin(); iter != str.end(); ++iter) {
+			*iter = std::tolower(static_cast<unsigned char>(*iter));
+		}
+	};
+	//std::cout<<"origin_server_data_arrived: "<<bytes_transferred<<std::endl;
+	if (this->connection_context.connection_state == proxy_connection_state::read_http_response_header) {
+		//std::cout<<"origin_server_data_arrived read_http_response_header"<<std::endl;
+		this->response_data.append(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred);
+		auto double_crlf_pos = this->response_data.find("\r\n\r\n");
+		if (double_crlf_pos == std::string::npos) {
+			if (this->response_data.size() < MAX_RESPONSE_HEADER_LENGTH) {
+				this->async_read_data_from_origin_server();
+			}
+			else {
+				this->report_error("502", "Bad Gateway", "Response header too long");
+			}
+			return;
+		}
 
-        //std::cout<<"header end pos: "<<double_crlf_pos<<std::endl;
-        this->response_header = http_header_parser::parse_response_header(this->response_data.begin(), this->response_data.begin() + double_crlf_pos + 4);
-        if (!this->response_header) {
-            this->report_error("502", "Bad Gateway", "Failed to parse response header");
-            return;
-        }
-        if (this->response_header->http_version() != "1.1" && this->response_header->http_version() != "1.0") {
-            this->report_error("502", "Bad Gateway", "HTTP version not supported");
-            return;
-        }
-        if (this->response_header->status_code() < 100 || this->response_header->status_code() > 700) {
-            this->report_error("502", "Bad Gateway", "Unexpected status code");
-            return;
-        }
-        this->read_response_context.content_length = boost::optional<std::uint64_t>();
-        this->read_response_context.content_length_has_read = 0;
-        this->read_response_context.is_origin_server_keep_alive = false;
-        this->read_response_context.chunk_checker = boost::optional<http_chunk_checker>();
+		//std::cout<<"header end pos: "<<double_crlf_pos<<std::endl;
+		this->response_header = http_header_parser::parse_response_header(this->response_data.begin(), this->response_data.begin() + double_crlf_pos + 4);
+		if (!this->response_header) {
+			this->report_error("502", "Bad Gateway", "Failed to parse response header");
+			return;
+		}
+		if (this->response_header->http_version() != "1.1" && this->response_header->http_version() != "1.0") {
+			this->report_error("502", "Bad Gateway", "HTTP version not supported");
+			return;
+		}
+		if (this->response_header->status_code() < 100 || this->response_header->status_code() > 700) {
+			this->report_error("502", "Bad Gateway", "Unexpected status code");
+			return;
+		}
+		this->read_response_context.content_length = boost::optional<std::uint64_t>();
+		this->read_response_context.content_length_has_read = 0;
+		this->read_response_context.is_origin_server_keep_alive = false;
+		this->read_response_context.chunk_checker = boost::optional<http_chunk_checker>();
+		this->read_response_context.content_type = boost::optional<std::string>();
+		this->read_response_context.content_encoding = boost::optional<std::string>();
 
-        auto connection_value = this->response_header->get_header_value("Connection");
-        
-        if (this->response_header->http_version() == "1.1") {
-            this->read_response_context.is_origin_server_keep_alive = true;
-        }
-        else {
-            this->read_response_context.is_origin_server_keep_alive = false;
-        }
-        auto string_to_lower_case = [](std::string& str) {
-            for (auto iter = str.begin(); iter != str.end(); ++iter) {
-                *iter = std::tolower(static_cast<unsigned char>(*iter));
-            }
-        };
-        if (connection_value) {
-            string_to_lower_case(*connection_value);
-            if (*connection_value == "close") {
-                this->read_response_context.is_origin_server_keep_alive = false;
-            }
-            else if (*connection_value == "keep-alive") {
-                this->read_response_context.is_origin_server_keep_alive = true;
-            }
-            else {
-                this->report_error("502", "Bad Gateway", std::string());
-                return;
-            }
-        }
+		auto connection_value = this->response_header->get_header_value("Connection");
 
-        if (this->request_header->method() == "HEAD") {
-            this->read_response_context.content_length = boost::optional<std::uint64_t>(0);
-        }
-        else if (this->response_header->status_code() == 204 || this->response_header->status_code() == 304) {
-            // 204 No Content
-            // 304 Not Modified
-            this->read_response_context.content_length = boost::optional<std::uint64_t>(0);
-        }
-        else {
-            auto content_length_value = this->response_header->get_header_value("Content-Length");
-            auto transfer_encoding_value = this->response_header->get_header_value("Transfer-Encoding");
-            if (content_length_value) {
-                try {
-                    this->read_response_context.content_length = boost::optional<std::uint64_t>(std::stoull(*content_length_value));
-                }
-                catch(const std::exception&) {
-                    this->report_error("502", "Bad Gateway", "Invalid Content-Length in response");
-                    return;
-                }
-                this->read_response_context.content_length_has_read = this->response_data.size() - (double_crlf_pos + 4);
-            }
-            else if (transfer_encoding_value) {
-                string_to_lower_case(*transfer_encoding_value);
-                if (*transfer_encoding_value == "chunked") {
-                    this->read_response_context.chunk_checker = boost::optional<http_chunk_checker>(http_chunk_checker());
-                    if (!this->read_response_context.chunk_checker->check(this->response_data.begin() + double_crlf_pos + 4, this->response_data.end())) {
-                        this->report_error("502", "Bad Gateway", "Failed to check chunked response");
-                        return;
-                    }
-                }
-                else {
-                    this->report_error("502", "Bad Gateway", "Unsupported Transfer-Encoding");
-                    return;
-                }
-            }
-            else if (this->read_response_context.is_origin_server_keep_alive) {
-                this->report_error("502", "Bad Gateway", "Miss response length info");
-                return;
-            }
-        }
+		if (this->response_header->http_version() == "1.1") {
+			this->read_response_context.is_origin_server_keep_alive = true;
+		}
+		else {
+			this->read_response_context.is_origin_server_keep_alive = false;
+		}
+		if (connection_value) {
+			string_to_lower_case(*connection_value);
+			if (*connection_value == "close") {
+				this->read_response_context.is_origin_server_keep_alive = false;
+			}
+			else if (*connection_value == "keep-alive") {
+				this->read_response_context.is_origin_server_keep_alive = true;
+			}
+			else {
+				this->report_error("502", "Bad Gateway", std::string());
+				return;
+			}
+		}
 
-        if(http_proxy_server_config::get_instance().enable_response_filter()
-            && this->response_header->get_header_value("Content-Type")
-            && (*this->response_header->get_header_value("Content-Type")) == ("image/jpeg")
-            && this->read_response_context.content_length
-            && *this->read_response_context.content_length>0){
-          //std::cout<<"Need to filter: "<<this->request_header->path_and_query()<<"length"<<*this->read_response_context.content_length<<std::endl;
-            this->connection_context.connection_state = proxy_connection_state::wait_for_total_http_response_content;
-            this->async_read_data_from_origin_server();
-        }
-        else
-          this->async_write_response_header_to_proxy_client();
-    }
-    else if(this->connection_context.connection_state == proxy_connection_state::wait_for_total_http_response_content){
-      //std::cout<<"Partial data: "<<bytes_transferred<<std::endl;
-      this->response_data.append(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred);
-      this->read_response_context.content_length_has_read += bytes_transferred;
-      //all is read
-      if (this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
-        //filter the response
-        auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
-        std::string response_content_data(response_content_begin, this->response_data.end());
+		if (this->request_header->method() == "HEAD") {
+			this->read_response_context.content_length = boost::optional<std::uint64_t>(0);
+		}
+		else if (this->response_header->status_code() == 204 || this->response_header->status_code() == 304) {
+			// 204 No Content
+			// 304 Not Modified
+			this->read_response_context.content_length = boost::optional<std::uint64_t>(0);
+		}
+		else {
+			auto content_length_value = this->response_header->get_header_value("Content-Length");
+			auto transfer_encoding_value = this->response_header->get_header_value("Transfer-Encoding");
+			if (content_length_value) {
+				try {
+					this->read_response_context.content_length = boost::optional<std::uint64_t>(std::stoull(*content_length_value));
+				}
+				catch (const std::exception&) {
+					this->report_error("502", "Bad Gateway", "Invalid Content-Length in response");
+					return;
+				}
+				this->read_response_context.content_length_has_read = this->response_data.size() - (double_crlf_pos + 4);
+			}
+			else if (transfer_encoding_value) {
+				string_to_lower_case(*transfer_encoding_value);
+				if (*transfer_encoding_value == "chunked") {
+					this->read_response_context.chunk_checker = boost::optional<http_chunk_checker>(http_chunk_checker());
+					if (!this->read_response_context.chunk_checker->check(this->response_data.begin() + double_crlf_pos + 4, this->response_data.end())) {
+						this->report_error("502", "Bad Gateway", "Failed to check chunked response");
+						return;
+					}
+				}
+				else {
+					this->report_error("502", "Bad Gateway", "Unsupported Transfer-Encoding");
+					return;
+				}
+			}
+			else if (this->read_response_context.is_origin_server_keep_alive) {
+				this->report_error("502", "Bad Gateway", "Miss response length info");
+				return;
+			}
+		}
 
-        //if content-encoding == gzip, decompress
-        if(this->response_header->get_header_value("Content-Encoding") &&
-            *this->response_header->get_header_value("Content-Encoding") == "gzip"){
-          std::string decompressed;
-          boost::iostreams::filtering_ostream os;
-          os.push(boost::iostreams::gzip_decompressor());
-          os.push(boost::iostreams::back_inserter(decompressed));
+		//     if(this->response_header->get_header_value("Content-Encoding") ){
+		//std::cout << *this->response_header->get_header_value("Content-Encoding")<<": ";
+		//std::cout << this->request_header->host() << this->request_header->path_and_query() << std::endl;
+		//     }
 
-          boost::iostreams::write(os, response_content_data.data(), response_content_data.size());
-          os.reset();
-          response_content_data = std::move(decompressed);
-          //std::cout<<"Decompressed: "<<response_content_data.size()<<std::endl;
-        }
+		//white list, just write response to proxy client
 
-        std::string response_content(response_content_begin, this->response_data.end());
-        std::ofstream picfile("images/"+UrlEncode(this->request_header->host()+this->request_header->path_and_query()), std::ios::binary);
-        picfile<<response_content;
-        picfile.close();
+		if (this->response_header->get_header_value("Content-Type")){
+			this->read_response_context.content_type = this->response_header->get_header_value("Content-Type");
+			std::string content_type = *this->read_response_context.content_type;
+			//to ignore case
+			//string_to_lower_case(content_type);
+			std::transform(content_type.begin(), content_type.end(), content_type.begin(), std::tolower);
+			if (content_type.find(kJpegType) != std::string::npos){
+				this->read_response_context.content_type = boost::optional<std::string>(kJpegType);
+			}
+			else if (content_type.find(kPngType) != std::string::npos){
+				this->read_response_context.content_type = boost::optional<std::string>(kPngType);
+			}
+			else if (content_type.find(kHtmlType) != std::string::npos){
+				this->read_response_context.content_type = boost::optional<std::string>(kHtmlType);
+			}
+		}
 
-        //std::cout << "invoke porn classify: "<<std::this_thread::get_id()<<std::endl;
-        std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
-        picture_classifier_.AsyncClassifyPicture("jpeg", response_content_data,
-              this->strand.wrap([this, self](int mode) {
-                this->OnClassify(mode);
-                })
-              );
-        //picture_classifier_.AsyncClassifyPicture("jpeg", response_content,
-            //([this, self](int mode) {
-             //this->strand.post(boost::bind(&http_proxy_server_connection::OnClassify,
-               //this, self, mode));
-             //})
-            //);
+		if (this->response_header->get_header_value("Content-Encoding")){
+			this->read_response_context.content_encoding = this->response_header->get_header_value("Content-Encoding");
+			std::string content_encoding = *this->read_response_context.content_encoding;
+			//to ignore case
+			//string_to_lower_case(content_encoding);
+			std::transform(content_encoding.begin(), content_encoding.end(), content_encoding.begin(), std::tolower);
+			if (content_encoding.find(kGzipEncoding) != std::string::npos){
+				this->read_response_context.content_encoding = boost::optional<std::string>(kGzipEncoding);
+			}
+		}
+		//
+		if (http_proxy_server_config::get_instance().enable_response_filter() &&
+			//content encoding
+			(!this->read_response_context.content_encoding
+			|| (*this->read_response_context.content_encoding == kGzipEncoding))
+			//content type
+			&& this->read_response_context.content_type
+			&& (this->read_response_context.is_origin_server_keep_alive)
+			//not redirect
+			//&& (!this->response_header->get_header_value("Location"))
+			//satus code need to be 200, it is 3xx when redirect
+			&& this->response_header->status_code() == 200
+			&& this->request_header->method() == "GET"
+			&&
+			(
+			(
+			((*this->read_response_context.content_type) == kJpegType
+			|| (*this->read_response_context.content_type) == kPngType
+			) &&
+			(this->read_response_context.content_length && *this->read_response_context.content_length > 0)
+			)
+			//transfer type
+			//only handle html with chunked, because it is difficult to reconsctuct the message body for iamge.
+			||
+			((*this->read_response_context.content_type) == kHtmlType &&
+			((this->read_response_context.content_length && *this->read_response_context.content_length > 0)
+			|| this->read_response_context.chunk_checker))
+			)
+			)
+		{
+			//std::cout << "Need to Process: " << this->request_header->host() << this->request_header->path_and_query() << std::endl;
+			this->connection_context.connection_state = proxy_connection_state::wait_for_total_http_response_content;
+			this->async_read_data_from_origin_server();
+		}
+		else
+			this->async_write_response_header_to_proxy_client();
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::wait_for_total_http_response_content){
+		//std::cout<<"Partial data: "<<bytes_transferred<<std::endl;
+		bool is_all_recved = false;
+		if (this->read_response_context.content_length) {
+			this->read_response_context.content_length_has_read += bytes_transferred;
+			if (this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
+				is_all_recved = true;
+			}
+		}
+		else if (this->read_response_context.chunk_checker) {
+			if (!this->read_response_context.chunk_checker->check(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred)) {
+				return;
+			}
+			if (this->read_response_context.chunk_checker->is_complete()){
+				is_all_recved = true;
+			}
+		}
+		this->response_data.append(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred);
+		//all is read
+		//if (this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
+		if (is_all_recved){
+			//std::cout << "All Recved: " << this->request_header->host() << this->request_header->path_and_query() << std::endl;
+			//filter the response
+			auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
+			std::string response_content_data(response_content_begin, this->response_data.end());
 
-        //this->async_write_response_header_to_proxy_client();
-      }
-      else{
-        this->async_read_data_from_origin_server();
-      }
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::read_http_response_content) {
-      //std::cout<<"origin_server_data_arrived read_http_response_content"<<std::endl;
-        if (this->read_response_context.content_length) {
-            this->read_response_context.content_length_has_read += bytes_transferred;
-        }
-        else if (this->read_response_context.chunk_checker) {
-            if (!this->read_response_context.chunk_checker->check(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred)) {
-                return;
-            }
-        }
-        this->connection_context.connection_state = proxy_connection_state::write_http_response_content;
-        this->downgoing_buffer_write = this->downgoing_buffer_read;
-        this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
-        this->downgoing_buffer_write = this->downgoing_buffer_read;
-        this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
-    }
+			//extract the data from chunk, it only happens for html
+			if (this->read_response_context.chunk_checker)
+				response_content_data = this->read_response_context.chunk_checker->GetData();
+
+			//if content-encoding == gzip, decompress
+			std::string decompressed_response_content_data = Decompress(response_content_data);
+
+			if (*this->read_response_context.content_type == kHtmlType){
+				//std::cout << this->request_header->host() << std::endl;
+				//if (server_context_.imgsrc_dict.find(BuildRequestUrl()) == server_context_.imgsrc_dict.end()){
+					//server_context_.imgsrc_dict[BuildRequestUrl()] = std::set<std::string>();
+				//}
+				//use whole host+path&query as key, ignore port
+				//std::set<std::string>& srcset = server_context_.imgsrc_dict[];
+				std::set<std::string> srcset;
+				GumboOutput* output = gumbo_parse(decompressed_response_content_data.c_str());
+				//search for links and insert to the set
+				search_for_links(output->root, srcset);
+				gumbo_destroy_output(&kGumboDefaultOptions, output);
+				//add to map
+				if (srcset.size() > 0){
+					std::cout << BuildRequestUrl() << ":" << std::endl;
+					for (auto src : srcset){
+						std::cout <<"\t"<< src << std::endl;
+					}
+					server_context_.imgsrc_dict_mutex.lock();
+					bool exist = false;
+					for (auto eachset : server_context_.imgsrc_dict){
+						if (eachset.first == BuildRequestUrl()){
+							eachset.second = std::move(srcset);
+							exist = true;
+							break;
+						}
+					}
+					if (!exist){
+						server_context_.imgsrc_dict.push_back(std::make_pair(BuildRequestUrl(), std::move(srcset)));
+						if (server_context_.imgsrc_dict.size() > kMaxHtmlBufferSize){
+							server_context_.imgsrc_dict.erase(server_context_.imgsrc_dict.begin());
+						}
+					}
+					//server_context_.imgsrc_dict[BuildRequestUrl()] = std::move(srcset);
+					server_context_.imgsrc_dict_mutex.unlock();
+				}
+				//then send back
+				this->async_write_response_header_to_proxy_client();
+			}
+			else if (*this->read_response_context.content_type == kJpegType
+				|| *this->read_response_context.content_type == kPngType){
+				std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
+				picture_classifier_.AsyncClassifyPicture(*this->read_response_context.content_type, decompressed_response_content_data,
+					this->strand.wrap([this, self](std::string oimg, bool isillegal) {
+					this->OnClassify(oimg, isillegal);
+				})
+					);
+			}
+
+			//std::string response_content(response_content_begin, this->response_data.end());
+			//std::ofstream picfile("images/"+UrlEncode(this->request_header->host()+this->request_header->path_and_query()), std::ios::binary);
+			//picfile<<response_content;
+			//picfile.close();
+
+			//std::cout << "invoke porn classify: "<<std::this_thread::get_id()<<std::endl;
+		}
+		else{
+			this->async_read_data_from_origin_server();
+		}
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::read_http_response_content) {
+		//std::cout<<"origin_server_data_arrived read_http_response_content"<<std::endl;
+		if (this->read_response_context.content_length) {
+			this->read_response_context.content_length_has_read += bytes_transferred;
+		}
+		else if (this->read_response_context.chunk_checker) {
+			if (!this->read_response_context.chunk_checker->check(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred)) {
+				return;
+			}
+		}
+		this->connection_context.connection_state = proxy_connection_state::write_http_response_content;
+		this->downgoing_buffer_write = this->downgoing_buffer_read;
+		this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
+		this->downgoing_buffer_write = this->downgoing_buffer_read;
+		this->async_write_data_to_proxy_client(this->downgoing_buffer_write.data(), 0, bytes_transferred);
+	}
 }
 
 void http_proxy_server_connection::on_proxy_client_data_written()
 {
-    if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
-        this->async_read_data_from_origin_server();
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::write_http_response_header
-        || this->connection_context.connection_state == proxy_connection_state::write_http_response_content) {
-        if ((this->read_response_context.content_length && this->read_response_context.content_length_has_read >= *this->read_response_context.content_length)
-            || (this->read_response_context.chunk_checker && this->read_response_context.chunk_checker->is_complete())) {
-            boost::system::error_code ec;
-            if (!this->read_response_context.is_origin_server_keep_alive) {
-                this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-                this->origin_server_socket.close(ec);
-            }
-            if (this->read_request_context.is_proxy_client_keep_alive) {
-                this->request_data.clear();
-                this->response_data.clear();
-                this->request_header = boost::optional<http_request_header>();
-                this->response_header = boost::optional<http_response_header>();
-                this->read_request_context.content_length = boost::optional<std::uint64_t>();
-                this->read_request_context.chunk_checker = boost::optional<http_chunk_checker>();
-                this->read_response_context.content_length = boost::optional<std::uint64_t>();
-                this->read_response_context.chunk_checker = boost::optional<http_chunk_checker>();
-                this->connection_context.connection_state = proxy_connection_state::read_http_request_header;
-                this->async_read_data_from_proxy_client();
-            }
-            else {
-                this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-                this->proxy_client_socket.close(ec);
-            }
-        }
-        else {
-            this->connection_context.connection_state = proxy_connection_state::read_http_response_content;
-            this->async_read_data_from_origin_server();
-        }
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::report_connection_established) {
-        this->start_tunnel_transfer();
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::report_error) {
-        boost::system::error_code ec;
-        if (this->origin_server_socket.is_open()) {
-            this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-            this->origin_server_socket.close(ec);
-        }
-        if (this->proxy_client_socket.is_open()) {
-            this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-            this->proxy_client_socket.close(ec);
-        }
-    }
+	if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
+		this->async_read_data_from_origin_server();
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::write_http_response_header
+		|| this->connection_context.connection_state == proxy_connection_state::write_http_response_content) {
+		if ((this->read_response_context.content_length && this->read_response_context.content_length_has_read >= *this->read_response_context.content_length)
+			|| (this->read_response_context.chunk_checker && this->read_response_context.chunk_checker->is_complete())) {
+			boost::system::error_code ec;
+			if (!this->read_response_context.is_origin_server_keep_alive) {
+				this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+				this->origin_server_socket.close(ec);
+			}
+			if (this->read_request_context.is_proxy_client_keep_alive) {
+				this->request_data.clear();
+				this->response_data.clear();
+				this->request_header = boost::optional<http_request_header>();
+				this->response_header = boost::optional<http_response_header>();
+				this->read_request_context.content_length = boost::optional<std::uint64_t>();
+				this->read_request_context.chunk_checker = boost::optional<http_chunk_checker>();
+				this->read_response_context.content_length = boost::optional<std::uint64_t>();
+				this->read_response_context.chunk_checker = boost::optional<http_chunk_checker>();
+				this->connection_context.connection_state = proxy_connection_state::read_http_request_header;
+				this->async_read_data_from_proxy_client();
+			}
+			else {
+				this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+				this->proxy_client_socket.close(ec);
+			}
+		}
+		else {
+			this->connection_context.connection_state = proxy_connection_state::read_http_response_content;
+			this->async_read_data_from_origin_server();
+		}
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::report_connection_established) {
+		this->start_tunnel_transfer();
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::report_error) {
+		boost::system::error_code ec;
+		if (this->origin_server_socket.is_open()) {
+			this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+			this->origin_server_socket.close(ec);
+		}
+		if (this->proxy_client_socket.is_open()) {
+			this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+			this->proxy_client_socket.close(ec);
+		}
+	}
 }
 
 void http_proxy_server_connection::on_origin_server_data_written()
 {
-    if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
-        this->async_read_data_from_proxy_client();
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::write_http_request_header
-        || this->connection_context.connection_state == proxy_connection_state::write_http_request_content) {
-        if (this->read_request_context.content_length) {
-            if (this->read_request_context.content_length_has_read < *this->read_request_context.content_length) {
-                this->connection_context.connection_state = proxy_connection_state::read_http_request_content;
-                this->async_read_data_from_proxy_client();
-            }
-            else {
-                this->connection_context.connection_state = proxy_connection_state::read_http_response_header;
-                this->async_read_data_from_origin_server();
-            }
-        }
-        else {
-            assert(this->read_request_context.chunk_checker);
-            if (!this->read_request_context.chunk_checker->is_complete()) {
-                this->connection_context.connection_state = proxy_connection_state::read_http_request_content;
-                this->async_read_data_from_proxy_client();
-            }
-            else {
-                this->connection_context.connection_state = proxy_connection_state::read_http_response_header;
-                this->async_read_data_from_origin_server();
-            }
-        }
-    }
+	if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
+		this->async_read_data_from_proxy_client();
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::write_http_request_header
+		|| this->connection_context.connection_state == proxy_connection_state::write_http_request_content) {
+		if (this->read_request_context.content_length) {
+			if (this->read_request_context.content_length_has_read < *this->read_request_context.content_length) {
+				this->connection_context.connection_state = proxy_connection_state::read_http_request_content;
+				this->async_read_data_from_proxy_client();
+			}
+			else {
+				this->connection_context.connection_state = proxy_connection_state::read_http_response_header;
+				this->async_read_data_from_origin_server();
+			}
+		}
+		else {
+			assert(this->read_request_context.chunk_checker);
+			if (!this->read_request_context.chunk_checker->is_complete()) {
+				this->connection_context.connection_state = proxy_connection_state::read_http_request_content;
+				this->async_read_data_from_proxy_client();
+			}
+			else {
+				this->connection_context.connection_state = proxy_connection_state::read_http_response_header;
+				this->async_read_data_from_origin_server();
+			}
+		}
+	}
 }
 
 void http_proxy_server_connection::on_error(const boost::system::error_code& error)
 {
-    if (this->connection_context.connection_state == proxy_connection_state::resolve_origin_server_address) {
-        this->report_error("504", "Gateway Timeout", "Failed to resolve the hostname");
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::connect_to_origin_server) {
-        this->report_error("502", "Bad Gateway", "Failed to connect to origin server");
-    }
-    else if (this->connection_context.connection_state == proxy_connection_state::write_http_request_header && this->connection_context.reconnect_on_error) {
-        boost::system::error_code ec;
-        this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        this->origin_server_socket.close(ec);
-        this->async_connect_to_origin_server();
-    }
-    else {
-        boost::system::error_code ec;
-        if (this->origin_server_socket.is_open()) {
-            this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-            this->origin_server_socket.close(ec);
-        }
-        if (this->proxy_client_socket.is_open()) {
-            this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-            this->proxy_client_socket.close(ec);
-        }
-    }
+	if (this->connection_context.connection_state == proxy_connection_state::resolve_origin_server_address) {
+		this->report_error("504", "Gateway Timeout", "Failed to resolve the hostname");
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::connect_to_origin_server) {
+		this->report_error("502", "Bad Gateway", "Failed to connect to origin server");
+	}
+	else if (this->connection_context.connection_state == proxy_connection_state::write_http_request_header && this->connection_context.reconnect_on_error) {
+		boost::system::error_code ec;
+		this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+		this->origin_server_socket.close(ec);
+		this->async_connect_to_origin_server();
+	}
+	else {
+		boost::system::error_code ec;
+		if (this->origin_server_socket.is_open()) {
+			this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+			this->origin_server_socket.close(ec);
+		}
+		if (this->proxy_client_socket.is_open()) {
+			this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+			this->proxy_client_socket.close(ec);
+		}
+	}
 }
 
 void http_proxy_server_connection::on_timeout()
 {
-    boost::system::error_code ec;
-    if (this->origin_server_socket.is_open()) {
-        this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        this->origin_server_socket.close(ec);
-    }
-    if (this->proxy_client_socket.is_open()) {
-        this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        this->proxy_client_socket.close(ec);
-    }
+	boost::system::error_code ec;
+	if (this->origin_server_socket.is_open()) {
+		this->origin_server_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+		this->origin_server_socket.close(ec);
+	}
+	if (this->proxy_client_socket.is_open()) {
+		this->proxy_client_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+		this->proxy_client_socket.close(ec);
+	}
 }
 
 
-void http_proxy_server_connection::OnClassify(int mode)
+//void http_proxy_server_connection::OnClassify(int mode)
+void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal )
 {
-  //std::cout << "porn ret: "<<std::this_thread::get_id()<<" result: "<<mode<<std::endl;
-  if(mode == 1){
-    std::cout <<"Porn: "<<this->request_header->host()<<this->request_header->path_and_query()
-      <<"encoded url: "<<UrlEncode(this->request_header->host()+this->request_header->path_and_query())<<std::endl;
-  }
-  auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
+	if (isillegal){
+		std::cout << BuildRequestUrl() << std::endl;
+		for (auto eachset : server_context_.imgsrc_dict){
+			if (eachset.second.find(BuildRequestUrl()) != eachset.second.end()){
+				std::cout << "Hit: " << eachset.first << std::endl;
+				//write to porn detect table of database
+				//domain name, html url, pic url, detect time
+			}
+		}
+	}
+	//std::cout << "porn ret: "<<std::this_thread::get_id()<<" result: "<<mode<<std::endl;
+	//if(mode == 1){
+	//  std::cout <<"Porn: "<<this->request_header->host()<<this->request_header->path_and_query()
+	//    <<"encoded url: "<<UrlEncode(this->request_header->host()+this->request_header->path_and_query())<<std::endl;
+	//}
+	auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
 
-  this->modified_response_data = "HTTP/";
-  this->modified_response_data += this->response_header->http_version();
-  this->modified_response_data.push_back(' ');
-  this->modified_response_data += std::to_string(this->response_header->status_code());
-  if (!this->response_header->status_description().empty()) {
-    this->modified_response_data.push_back(' ');
-    this->modified_response_data += this->response_header->status_description();
-  }
-  this->modified_response_data += "\r\n";
+	this->modified_response_data = "HTTP/";
+	this->modified_response_data += this->response_header->http_version();
+	this->modified_response_data.push_back(' ');
+	this->modified_response_data += std::to_string(this->response_header->status_code());
+	if (!this->response_header->status_description().empty()) {
+		this->modified_response_data.push_back(' ');
+		this->modified_response_data += this->response_header->status_description();
+	}
+	this->modified_response_data += "\r\n";
 
-  const std::string& jpeg_place_holder = http_proxy_server_config::get_instance().GetJpegPlaceHolder();
-  //if(mode >=0)
-  //this->response_header->SetHeaderValue("Content-Length", std::to_string(jpeg_place_holder.size()));
-  if(mode == 1){
-    this->response_header->SetHeaderValue("Content-Length", std::to_string(jpeg_place_holder.size()));
-  }
-  for (const auto& header: this->response_header->get_headers_map()) {
-    this->modified_response_data += std::get<0>(header);
-    this->modified_response_data += ": ";
-    this->modified_response_data += std::get<1>(header);
-    this->modified_response_data += "\r\n";
-  }
-  this->modified_response_data += "\r\n";
-  if(mode ==1)
-    this->modified_response_data.append(jpeg_place_holder);
-  else
-    this->modified_response_data.append(response_content_begin, this->response_data.end());
-  this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
-  this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
-  //this->async_write_response_header_to_proxy_client();
+	const std::string& jpeg_place_holder = http_proxy_server_config::get_instance().GetJpegPlaceHolder();
+	//if(mode >=0)
+	//this->response_header->SetHeaderValue("Content-Length", std::to_string(jpeg_place_holder.size()));
+	//if(mode == 1){
+	pic = this->Compress(pic);
+	this->response_header->SetHeaderValue("Content-Length", std::to_string(pic.size()));
+	//}
+	for (const auto& header : this->response_header->get_headers_map()) {
+		this->modified_response_data += std::get<0>(header);
+		this->modified_response_data += ": ";
+		this->modified_response_data += std::get<1>(header);
+		this->modified_response_data += "\r\n";
+	}
+	this->modified_response_data += "\r\n";
+	//if(mode ==1)
+	//  this->modified_response_data.append(jpeg_place_holder);
+	//else
+	//  this->modified_response_data.append(response_content_begin, this->response_data.end());
+	this->modified_response_data.append(pic);
+	this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
+	this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
+	//this->async_write_response_header_to_proxy_client();
+}
+
+std::string http_proxy_server_connection::Decompress(std::string in){
+	if (this->read_response_context.content_encoding){
+		std::string decompressed;
+		boost::iostreams::filtering_ostream os;
+		if (*this->read_response_context.content_encoding == kGzipEncoding){
+			os.push(boost::iostreams::gzip_decompressor());
+		}
+		//else if (*this->response_header->get_header_value("Content-Encoding") == "deflate"){
+		//	os.push(boost::iostreams::zlib_decompressor());
+		//}
+		os.push(boost::iostreams::back_inserter(decompressed));
+
+		boost::iostreams::write(os, in.data(), in.size());
+		os.reset();
+		return decompressed;
+	}
+	else{
+		return in;
+	}
+}
+
+std::string http_proxy_server_connection::Compress(std::string in){
+	if (this->read_response_context.content_encoding){
+		std::string compressed;
+		boost::iostreams::filtering_ostream os;
+		if (*this->read_response_context.content_encoding == kGzipEncoding){
+			os.push(boost::iostreams::gzip_compressor());
+		}
+		//else if (*this->response_header->get_header_value("Content-Encoding") == "deflate"){
+		//	os.push(boost::iostreams::zlib_compressor());
+		//}
+		os.push(boost::iostreams::back_inserter(compressed));
+
+		boost::iostreams::write(os, in.data(), in.size());
+		os.reset();
+		return compressed;
+	}
+	else{
+		return in;
+	}
+}
+
+std::string http_proxy_server_connection::BuildRequestUrl(){
+	std::string url = this->request_header->scheme()+ "://" + this->request_header->host();
+	if (this->request_header->port() != 80)
+		url += ":" + std::to_string(this->request_header->port());
+	return url + this->request_header->path_and_query();
 }
 
 } // namespace azure_proxy
