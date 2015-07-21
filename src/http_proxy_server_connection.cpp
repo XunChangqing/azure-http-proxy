@@ -16,6 +16,8 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/algorithm/string.hpp>
+#include <boost/network/uri.hpp>
+#include <boost/network/uri/uri_io.hpp>
 
 #include "GLOG/logging.h"
 #include "gumbo.h"
@@ -49,7 +51,6 @@ namespace azure_proxy {
 
 http_proxy_server_connection::~http_proxy_server_connection()
 {
-  //std::cout<<"destruct connection!\n";
 	free_tld_tree(tree);
 }
 
@@ -151,7 +152,6 @@ void http_proxy_server_connection::async_connect_to_origin_server()
         }
 
         //mythxcq
-        //std::cout<<"Query: "<<this->connection_context.origin_server_name<<std::endl;
 
         boost::asio::ip::tcp::resolver::query query(this->connection_context.origin_server_name,
             std::to_string(this->connection_context.origin_server_port));
@@ -205,7 +205,6 @@ void http_proxy_server_connection::async_write_request_header_to_origin_server()
     this->connection_context.connection_state = proxy_connection_state::write_http_request_header;
     this->async_write_data_to_origin_server(this->modified_request_data.data(), 0, this->modified_request_data.size());
     //mythxcq
-    //std::cout<<"Write Request Header: "<<this->modified_request_data<<std::endl;
   }
 }
 
@@ -224,7 +223,6 @@ void http_proxy_server_connection::async_write_response_header_to_proxy_client()
     this->modified_response_data += "\r\n";
 
     for (const auto& header: this->response_header->get_headers_map()) {
-      //std::cout<<std::get<0>(header)<<": "<<std::get<1>(header)<<std::endl;
         this->modified_response_data += std::get<0>(header);
         this->modified_response_data += ": ";
         this->modified_response_data += std::get<1>(header);
@@ -402,7 +400,6 @@ void http_proxy_server_connection::on_resolved(boost::asio::ip::tcp::resolver::i
     //mythxcq
     //const time_t t = time(NULL);
     //struct tm* current_time = localtime(&t);
-    //std::cout<<current_time->tm_hour<<":"
       //<<current_time->tm_min<<":"
       //<<current_time->tm_sec<<"@@"
       //<<(unsigned long)this<<"@@"
@@ -530,6 +527,15 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
             }
         }
 
+		//black list filter
+		this->read_request_context.domain_name = GetDomainName(this->request_header->host());
+		if (url_database_.GetCountTmpBlackList(this->read_request_context.domain_name) ||
+			url_database_.GetCountBlackList(this->read_request_context.domain_name)){
+			this->report_error("400", "Host not allowed", std::string());
+			return;
+		}
+		this->read_request_context.count_white_list = url_database_.GetCountWhiteList(this->read_request_context.domain_name);
+
         if (this->request_header->method() == "CONNECT") {
             this->async_connect_to_origin_server();
             return;
@@ -643,12 +649,6 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
         this->async_write_data_to_origin_server(this->upgoing_buffer_write.data(), 0, bytes_transferred);
     }
 }
-
-const char* kJpegType = "image/jpeg";
-const char* kPngType = "image/png";
-const char* kHtmlType = "text/html";
-const char* kGzipEncoding = "gzip";
-const int kMaxHtmlBufferSize = 50;
 
 
 static void search_for_links(GumboNode* node, std::set<std::string> &srclist) {
@@ -808,9 +808,8 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 				this->read_response_context.content_encoding = boost::optional<std::string>(kGzipEncoding);
 			}
 		}
-		//
-		if (http_proxy_server_config::get_instance().enable_response_filter() &&
-			//content encoding
+		//if (http_proxy_server_config::get_instance().enable_response_filter() &&
+		if ( //content encoding
 			(!this->read_response_context.content_encoding
 			|| (*this->read_response_context.content_encoding == kGzipEncoding))
 			//content type
@@ -823,22 +822,28 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 			&& this->request_header->method() == "GET"
 			&&
 			(
-			(
-			((*this->read_response_context.content_type) == kJpegType
-			|| (*this->read_response_context.content_type) == kPngType
-			) &&
-			(this->read_response_context.content_length && *this->read_response_context.content_length > 0)
-			)
-			//transfer type
-			//only handle html with chunked, because it is difficult to reconsctuct the message body for iamge.
+				(
+					((*this->read_response_context.content_type) == kJpegType
+					|| (*this->read_response_context.content_type) == kPngType
+					) &&
+					(this->read_response_context.content_length && *this->read_response_context.content_length > 0) &&
+					(
+						kFilterMode == FILTER_ALL || !this->read_request_context.count_white_list
+					)
+				)
+				//transfer type
+				//only handle html with chunked, because it is difficult to reconsctuct the message body for iamge.
 			||
-			((*this->read_response_context.content_type) == kHtmlType &&
-			((this->read_response_context.content_length && *this->read_response_context.content_length > 0)
-			|| this->read_response_context.chunk_checker))
+				(
+					(*this->read_response_context.content_type) == kHtmlType &&
+					!this->read_request_context.count_white_list &&
+					((this->read_response_context.content_length && *this->read_response_context.content_length > 0)
+					|| this->read_response_context.chunk_checker)
+				)
 			)
 			)
 		{
-			//std::cout << "Need to Process: " << this->request_header->host() << this->request_header->path_and_query() << std::endl;
+			BOOST_LOG_TRIVIAL(debug) << "Need to process: " << this->request_header->host() << this->request_header->path_and_query();
 			this->connection_context.connection_state = proxy_connection_state::wait_for_total_http_response_content;
 			this->async_read_data_from_origin_server();
 		}
@@ -846,7 +851,6 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 			this->async_write_response_header_to_proxy_client();
 	}
 	else if (this->connection_context.connection_state == proxy_connection_state::wait_for_total_http_response_content){
-		//std::cout<<"Partial data: "<<bytes_transferred<<std::endl;
 		bool is_all_recved = false;
 		if (this->read_response_context.content_length) {
 			this->read_response_context.content_length_has_read += bytes_transferred;
@@ -892,19 +896,21 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 				gumbo_destroy_output(&kGumboDefaultOptions, output);
 				//add to map
 				if (srcset.size() > 0){
-					std::cout << BuildRequestUrl() << ":" << std::endl;
-					for (auto src : srcset){
-						std::cout <<"\t"<< src << std::endl;
-					}
+					//std::cout << BuildRequestUrl() << ":" << std::endl;
+					//for (auto src : srcset){
+					//	std::cout <<"\t"<< src << std::endl;
+					//}
 					server_context_.imgsrc_dict_mutex.lock();
 					bool exist = false;
 					for (auto eachset : server_context_.imgsrc_dict){
+						//if exist, replace it
 						if (eachset.first == BuildRequestUrl()){
 							eachset.second = std::move(srcset);
 							exist = true;
 							break;
 						}
 					}
+					//else add new, and remove the oldest
 					if (!exist){
 						server_context_.imgsrc_dict.push_back(std::make_pair(BuildRequestUrl(), std::move(srcset)));
 						if (server_context_.imgsrc_dict.size() > kMaxHtmlBufferSize){
@@ -913,6 +919,9 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 					}
 					//server_context_.imgsrc_dict[BuildRequestUrl()] = std::move(srcset);
 					server_context_.imgsrc_dict_mutex.unlock();
+					//check if the pic is porn according database, otherwise the cached pic will not be classified again
+					//then we cannot identify the cached pic
+					//....
 				}
 				//then send back
 				this->async_write_response_header_to_proxy_client();
@@ -1086,12 +1095,26 @@ void http_proxy_server_connection::on_timeout()
 void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal )
 {
 	if (isillegal){
-		std::cout << BuildRequestUrl() << std::endl;
+		BOOST_LOG_TRIVIAL(debug) <<"Porn pic: "<< BuildRequestUrl() << std::endl;
+		//insert to porn_pics database
+		url_database_.InsertPornPic(BuildRequestUrl());
 		for (auto eachset : server_context_.imgsrc_dict){
 			if (eachset.second.find(BuildRequestUrl()) != eachset.second.end()){
-				std::cout << "Hit: " << eachset.first << std::endl;
+				boost::network::uri::uri porn_page_uri(eachset.first);
+				BOOST_LOG_TRIVIAL(debug) << "\tHit: " << porn_page_uri.host() << porn_page_uri.path();
 				//write to porn detect table of database
 				//domain name, html url, pic url, detect time
+				std::string domain_name(GetDomainName(porn_page_uri.host()));
+				url_database_.InsertPornPage(domain_name, eachset.first, BuildRequestUrl());
+				//check number of porn pics this domain_name contains
+				int num = url_database_.GetPornPicNumOfDomainName(domain_name);
+				BOOST_LOG_TRIVIAL(debug) << "Number of porn pics in: " << domain_name << " is: " << num;
+				//add to temp black list, if contains too many porn pics
+				if (num > kPornPicNumThd ){//&& !url_database_.GetCountWhiteList(domain_name)){
+					BOOST_LOG_TRIVIAL(info) << "Add " << domain_name << " to temp black list";
+					url_database_.InsertIntoTmpBlackList(domain_name);
+					//add this domain name to web server
+				}
 			}
 		}
 	}
@@ -1183,6 +1206,30 @@ std::string http_proxy_server_connection::BuildRequestUrl(){
 	if (this->request_header->port() != 80)
 		url += ":" + std::to_string(this->request_header->port());
 	return url + this->request_header->path_and_query();
+}
+
+std::string http_proxy_server_connection::GetDomainName(std::string host)
+{
+	http_result_t     result;
+	string_t         *domain = &result.domain;
+
+	memset(&result, 0, sizeof(http_result_t));
+	std::string indomain(host);
+	std::transform(indomain.begin(), indomain.end(), indomain.begin(), std::tolower);
+
+	domain->data = &indomain[0];
+	domain->len = indomain.size();
+
+	//if cannot parse, then return host directly
+	if (parse_domain(tree, &result, domain) != 0) {
+		//BOOST_THROW_EXCEPTION(FatalException()<<MessageInfo("Cannt parse the domain: ")<<MessageInfo(host));
+		BOOST_LOG_TRIVIAL(warning) << "Cannot parse the host: " << host;
+		return host;
+	}
+
+	public_suffix_t *ps = &result.complex_domain;
+
+	return std::string(ps->domain.data, ps->domain.len);
 }
 
 } // namespace azure_proxy

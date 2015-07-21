@@ -20,6 +20,7 @@
 #include "http_proxy_server.hpp"
 #include "picture_classifier.hpp"
 #include "parse_domain.hpp"
+#include "url_database.h"
 
 namespace azure_proxy {
   using namespace boost;
@@ -31,6 +32,7 @@ class http_proxy_server_connection : public std::enable_shared_from_this<http_pr
   PictureClassifier& picture_classifier_;
   http_proxy_server_context& server_context_;
   tldnode          *tree;
+  UrlDatabase url_database_;
 
     boost::asio::io_service::strand strand;
     boost::asio::ip::tcp::socket proxy_client_socket;
@@ -85,6 +87,7 @@ private:
 	std::string Decompress(std::string);
 	std::string Compress(std::string);
 	std::string BuildRequestUrl();
+	std::string GetDomainName(std::string host);
 };
 
 } // namespace azure_proxy

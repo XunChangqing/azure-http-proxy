@@ -10,12 +10,15 @@
 #include "http_proxy_server_config.hpp"
 #include "http_proxy_server.hpp"
 #include "glog/logging.h"
-
+#include "misc.hpp"
+#include "url_database.h"
 
 int main(int argc, char **argv) {
   using namespace azure_proxy;
   try {
     ::google::InitGoogleLogging(argv[0]);
+	InitLogging();
+	UrlDatabase::InitAndCreate();
     auto &config = http_proxy_server_config::get_instance();
     if (config.load_config()) {
       std::cout << "Azure Http Proxy Server" << std::endl;
@@ -26,8 +29,14 @@ int main(int argc, char **argv) {
       http_proxy_server server(io_service, classification_service);
       server.run();
     }
-  } catch (const std::exception &e) {
-    std::cerr << e.what() << std::endl;
+  } 
+  catch (const boost::exception &e){
+	  BOOST_LOG_TRIVIAL(fatal) << boost::diagnostic_information(e);
+	  //exit(EXIT_FAILURE);
+  }
+  catch (const std::exception &e) {
+	  BOOST_LOG_TRIVIAL(fatal) << e.what();
+	  //exit(EXIT_FAILURE);
   }
   return 0;
 }
