@@ -536,6 +536,14 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
 		}
 		this->read_request_context.count_white_list = url_database_.GetCountWhiteList(this->read_request_context.domain_name);
 
+		//init request url and scheme and host
+		std::string url = this->request_header->scheme() + "://" + this->request_header->host();
+		if (this->request_header->port() != 80)
+			url += ":" + std::to_string(this->request_header->port());
+		this->read_request_context.scheme_host = url;
+		std::string url_val(url + this->request_header->path_and_query());
+		this->read_request_context.request_url = url + this->request_header->path_and_query();
+
         if (this->request_header->method() == "CONNECT") {
             this->async_connect_to_origin_server();
             return;
@@ -651,20 +659,26 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
 }
 
 
-static void search_for_links(GumboNode* node, std::set<std::string> &srclist) {
+static void search_for_links(GumboNode* node, std::string scheme_host, std::set<std::string> &srclist) {
   if (node->type != GUMBO_NODE_ELEMENT) {
     return;
   }
   GumboAttribute* src;
   if (node->v.element.tag == GUMBO_TAG_IMG &&
       (src = gumbo_get_attribute(&node->v.element.attributes, "src"))) {
-	  srclist.insert(std::string(src->value));
+	  //srclist.insert(std::string(src->value));
+	  std::string src_val(src->value);
+	  //transform src to lower case
+	  std::transform(src_val.begin(), src_val.end(), src_val.begin(), std::tolower);
+	  if (src_val.size() > 0 && src_val[0] == '/')
+		  src_val = scheme_host + src_val;
+	  srclist.insert(src_val);
     //std::cout << src->value << std::endl;
   }
 
   GumboVector* children = &node->v.element.children;
   for (unsigned int i = 0; i < children->length; ++i) {
-    search_for_links(static_cast<GumboNode*>(children->data[i]), srclist);
+    search_for_links(static_cast<GumboNode*>(children->data[i]), scheme_host, srclist);
   }
 }
 
@@ -808,6 +822,19 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 				this->read_response_context.content_encoding = boost::optional<std::string>(kGzipEncoding);
 			}
 		}
+
+
+		//for images
+		//set max-age to zero to force browser to send request for this pic again
+		//bool is_image = false;
+		//if ( this->read_response_context.content_type &&
+		//	( (*this->read_response_context.content_type) == kJpegType
+		//	|| (*this->read_response_context.content_type) == kPngType )
+		//){
+		//	is_image = true;
+		//	this->response_header->SetHeaderValue("Cache-Control", "max-age=0");
+		//}
+
 		//if (http_proxy_server_config::get_instance().enable_response_filter() &&
 		if ( //content encoding
 			(!this->read_response_context.content_encoding
@@ -822,126 +849,54 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 			&& this->request_header->method() == "GET"
 			&&
 			(
-				(
-					((*this->read_response_context.content_type) == kJpegType
-					|| (*this->read_response_context.content_type) == kPngType
-					) &&
-					(this->read_response_context.content_length && *this->read_response_context.content_length > 0) &&
-					(
-						kFilterMode == FILTER_ALL || !this->read_request_context.count_white_list
-					)
-				)
-				//transfer type
-				//only handle html with chunked, because it is difficult to reconsctuct the message body for iamge.
+			(
+			((*this->read_response_context.content_type) == kJpegType
+			|| (*this->read_response_context.content_type) == kPngType
+			) &&
+			(this->read_response_context.content_length && *this->read_response_context.content_length > 0) &&
+			(
+			kFilterMode == FILTER_ALL || !this->read_request_context.count_white_list
+			)
+			)
+			//transfer type
+			//only handle html with chunked, because it is difficult to reconsctuct the message body for iamge.
 			||
-				(
-					(*this->read_response_context.content_type) == kHtmlType &&
-					!this->read_request_context.count_white_list &&
-					((this->read_response_context.content_length && *this->read_response_context.content_length > 0)
-					|| this->read_response_context.chunk_checker)
-				)
+			(
+			(*this->read_response_context.content_type) == kHtmlType &&
+			!this->read_request_context.count_white_list &&
+			((this->read_response_context.content_length && *this->read_response_context.content_length > 0)
+			|| this->read_response_context.chunk_checker)
+			)
 			)
 			)
 		{
 			BOOST_LOG_TRIVIAL(debug) << "Need to process: " << this->request_header->host() << this->request_header->path_and_query();
-			this->connection_context.connection_state = proxy_connection_state::wait_for_total_http_response_content;
-			this->async_read_data_from_origin_server();
+			//if the body if very short, and all data has been received now
+			if (IsAllRecved()){
+				HandleCompleteResponse();
+			}
+			else{
+				this->connection_context.connection_state = proxy_connection_state::wait_for_total_http_response_content;
+				this->async_read_data_from_origin_server();
+			}
 		}
 		else
 			this->async_write_response_header_to_proxy_client();
 	}
 	else if (this->connection_context.connection_state == proxy_connection_state::wait_for_total_http_response_content){
-		bool is_all_recved = false;
 		if (this->read_response_context.content_length) {
 			this->read_response_context.content_length_has_read += bytes_transferred;
-			if (this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
-				is_all_recved = true;
-			}
 		}
 		else if (this->read_response_context.chunk_checker) {
 			if (!this->read_response_context.chunk_checker->check(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred)) {
 				return;
 			}
-			if (this->read_response_context.chunk_checker->is_complete()){
-				is_all_recved = true;
-			}
 		}
 		this->response_data.append(this->downgoing_buffer_read.begin(), this->downgoing_buffer_read.begin() + bytes_transferred);
 		//all is read
 		//if (this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
-		if (is_all_recved){
-			//std::cout << "All Recved: " << this->request_header->host() << this->request_header->path_and_query() << std::endl;
-			//filter the response
-			auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
-			std::string response_content_data(response_content_begin, this->response_data.end());
-
-			//extract the data from chunk, it only happens for html
-			if (this->read_response_context.chunk_checker)
-				response_content_data = this->read_response_context.chunk_checker->GetData();
-
-			//if content-encoding == gzip, decompress
-			std::string decompressed_response_content_data = Decompress(response_content_data);
-
-			if (*this->read_response_context.content_type == kHtmlType){
-				//std::cout << this->request_header->host() << std::endl;
-				//if (server_context_.imgsrc_dict.find(BuildRequestUrl()) == server_context_.imgsrc_dict.end()){
-					//server_context_.imgsrc_dict[BuildRequestUrl()] = std::set<std::string>();
-				//}
-				//use whole host+path&query as key, ignore port
-				//std::set<std::string>& srcset = server_context_.imgsrc_dict[];
-				std::set<std::string> srcset;
-				GumboOutput* output = gumbo_parse(decompressed_response_content_data.c_str());
-				//search for links and insert to the set
-				search_for_links(output->root, srcset);
-				gumbo_destroy_output(&kGumboDefaultOptions, output);
-				//add to map
-				if (srcset.size() > 0){
-					//std::cout << BuildRequestUrl() << ":" << std::endl;
-					//for (auto src : srcset){
-					//	std::cout <<"\t"<< src << std::endl;
-					//}
-					server_context_.imgsrc_dict_mutex.lock();
-					bool exist = false;
-					for (auto eachset : server_context_.imgsrc_dict){
-						//if exist, replace it
-						if (eachset.first == BuildRequestUrl()){
-							eachset.second = std::move(srcset);
-							exist = true;
-							break;
-						}
-					}
-					//else add new, and remove the oldest
-					if (!exist){
-						server_context_.imgsrc_dict.push_back(std::make_pair(BuildRequestUrl(), std::move(srcset)));
-						if (server_context_.imgsrc_dict.size() > kMaxHtmlBufferSize){
-							server_context_.imgsrc_dict.erase(server_context_.imgsrc_dict.begin());
-						}
-					}
-					//server_context_.imgsrc_dict[BuildRequestUrl()] = std::move(srcset);
-					server_context_.imgsrc_dict_mutex.unlock();
-					//check if the pic is porn according database, otherwise the cached pic will not be classified again
-					//then we cannot identify the cached pic
-					//....
-				}
-				//then send back
-				this->async_write_response_header_to_proxy_client();
-			}
-			else if (*this->read_response_context.content_type == kJpegType
-				|| *this->read_response_context.content_type == kPngType){
-				std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
-				picture_classifier_.AsyncClassifyPicture(*this->read_response_context.content_type, decompressed_response_content_data,
-					this->strand.wrap([this, self](std::string oimg, bool isillegal) {
-					this->OnClassify(oimg, isillegal);
-				})
-					);
-			}
-
-			//std::string response_content(response_content_begin, this->response_data.end());
-			//std::ofstream picfile("images/"+UrlEncode(this->request_header->host()+this->request_header->path_and_query()), std::ios::binary);
-			//picfile<<response_content;
-			//picfile.close();
-
-			//std::cout << "invoke porn classify: "<<std::this_thread::get_id()<<std::endl;
+		if (IsAllRecved()){
+			HandleCompleteResponse();
 		}
 		else{
 			this->async_read_data_from_origin_server();
@@ -1092,25 +1047,26 @@ void http_proxy_server_connection::on_timeout()
 
 
 //void http_proxy_server_connection::OnClassify(int mode)
-void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal )
+void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal)
 {
+	//BOOST_LOG_TRIVIAL(debug) << "Classify pic: " << BuildRequestUrl() << std::endl;
 	if (isillegal){
-		BOOST_LOG_TRIVIAL(debug) <<"Porn pic: "<< BuildRequestUrl() << std::endl;
+		BOOST_LOG_TRIVIAL(debug) << "Porn pic: " << this->read_request_context.request_url << std::endl;
 		//insert to porn_pics database
-		url_database_.InsertPornPic(BuildRequestUrl());
+		url_database_.InsertPornPic(this->read_request_context.request_url);
 		for (auto eachset : server_context_.imgsrc_dict){
-			if (eachset.second.find(BuildRequestUrl()) != eachset.second.end()){
+			if (eachset.second.find(this->read_request_context.request_url) != eachset.second.end()){
 				boost::network::uri::uri porn_page_uri(eachset.first);
 				BOOST_LOG_TRIVIAL(debug) << "\tHit: " << porn_page_uri.host() << porn_page_uri.path();
 				//write to porn detect table of database
 				//domain name, html url, pic url, detect time
 				std::string domain_name(GetDomainName(porn_page_uri.host()));
-				url_database_.InsertPornPage(domain_name, eachset.first, BuildRequestUrl());
+				url_database_.InsertPornPage(domain_name, eachset.first, this->read_request_context.request_url);
 				//check number of porn pics this domain_name contains
 				int num = url_database_.GetPornPicNumOfDomainName(domain_name);
 				BOOST_LOG_TRIVIAL(debug) << "Number of porn pics in: " << domain_name << " is: " << num;
 				//add to temp black list, if contains too many porn pics
-				if (num > kPornPicNumThd ){//&& !url_database_.GetCountWhiteList(domain_name)){
+				if (num > kPornPicNumThd){//&& !url_database_.GetCountWhiteList(domain_name)){
 					BOOST_LOG_TRIVIAL(info) << "Add " << domain_name << " to temp black list";
 					url_database_.InsertIntoTmpBlackList(domain_name);
 					//add this domain name to web server
@@ -1118,11 +1074,8 @@ void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal )
 			}
 		}
 	}
-	//std::cout << "porn ret: "<<std::this_thread::get_id()<<" result: "<<mode<<std::endl;
-	//if(mode == 1){
-	//  std::cout <<"Porn: "<<this->request_header->host()<<this->request_header->path_and_query()
-	//    <<"encoded url: "<<UrlEncode(this->request_header->host()+this->request_header->path_and_query())<<std::endl;
-	//}
+	//insert into processed_pics
+
 	auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
 
 	this->modified_response_data = "HTTP/";
@@ -1202,10 +1155,12 @@ std::string http_proxy_server_connection::Compress(std::string in){
 }
 
 std::string http_proxy_server_connection::BuildRequestUrl(){
-	std::string url = this->request_header->scheme()+ "://" + this->request_header->host();
+	std::string url = this->request_header->scheme() + "://" + this->request_header->host();
 	if (this->request_header->port() != 80)
 		url += ":" + std::to_string(this->request_header->port());
-	return url + this->request_header->path_and_query();
+	std::string url_val(url + this->request_header->path_and_query());
+	//std::transform(url_val.begin(), url_val.end(), url_val.begin(), std::tolower);
+	return url_val;
 }
 
 std::string http_proxy_server_connection::GetDomainName(std::string host)
@@ -1230,6 +1185,88 @@ std::string http_proxy_server_connection::GetDomainName(std::string host)
 	public_suffix_t *ps = &result.complex_domain;
 
 	return std::string(ps->domain.data, ps->domain.len);
+}
+
+bool http_proxy_server_connection::IsAllRecved(){
+	if (this->read_response_context.content_length &&
+		this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
+		return true;
+	}
+	else if (this->read_response_context.chunk_checker &&
+		this->read_response_context.chunk_checker->is_complete()){
+		return true;
+	}
+	else
+		return false;
+}
+
+void http_proxy_server_connection::HandleCompleteResponse(){
+	//std::cout << "All Recved: " << this->request_header->host() << this->request_header->path_and_query() << std::endl;
+	//filter the response
+	auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
+	std::string response_content_data(response_content_begin, this->response_data.end());
+
+	//extract the data from chunk, it only happens for html
+	if (this->read_response_context.chunk_checker)
+		response_content_data = this->read_response_context.chunk_checker->GetData();
+
+	//if content-encoding == gzip, decompress
+	std::string decompressed_response_content_data = Decompress(response_content_data);
+
+	if (*this->read_response_context.content_type == kHtmlType){
+		//std::cout << this->request_header->host() << std::endl;
+		//if (server_context_.imgsrc_dict.find(BuildRequestUrl()) == server_context_.imgsrc_dict.end()){
+		//server_context_.imgsrc_dict[BuildRequestUrl()] = std::set<std::string>();
+		//}
+		//use whole host+path&query as key, ignore port
+		//std::set<std::string>& srcset = server_context_.imgsrc_dict[];
+		std::set<std::string> srcset;
+		GumboOutput* output = gumbo_parse(decompressed_response_content_data.c_str());
+		//search for links and insert to the set
+		search_for_links(output->root, this->read_request_context.scheme_host, srcset);
+		gumbo_destroy_output(&kGumboDefaultOptions, output);
+		//add to map
+		if (srcset.size() > 0){
+			BOOST_LOG_TRIVIAL(debug) << this->read_request_context.request_url << ":" << std::endl;
+			for (auto src : srcset){
+				BOOST_LOG_TRIVIAL(debug) <<"\t"<< src << std::endl;
+			}
+			server_context_.imgsrc_dict_mutex.lock();
+			bool exist = false;
+			for (auto eachset : server_context_.imgsrc_dict){
+				//if exist, replace it
+				if (eachset.first == this->read_request_context.request_url){
+					eachset.second = std::move(srcset);
+					exist = true;
+					break;
+				}
+			}
+			//else add new, and remove the oldest
+			if (!exist){
+				server_context_.imgsrc_dict.push_back(std::make_pair(this->read_request_context.request_url, std::move(srcset)));
+				if (server_context_.imgsrc_dict.size() > kMaxHtmlBufferSize){
+					server_context_.imgsrc_dict.erase(server_context_.imgsrc_dict.begin());
+				}
+			}
+			//server_context_.imgsrc_dict[BuildRequestUrl()] = std::move(srcset);
+			server_context_.imgsrc_dict_mutex.unlock();
+			//check if the pic is porn according database, otherwise the cached pic will not be classified again
+			//then we cannot identify the cached pic
+			//....
+		}
+		//then send back
+		this->async_write_response_header_to_proxy_client();
+	}
+	else if (*this->read_response_context.content_type == kJpegType
+		|| *this->read_response_context.content_type == kPngType){
+		std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
+		picture_classifier_.AsyncClassifyPicture(*this->read_response_context.content_type, decompressed_response_content_data,
+			this->strand.wrap([this, self](std::string oimg, bool isillegal) {
+			this->OnClassify(oimg, isillegal);
+		})
+			);
+	}
+
 }
 
 } // namespace azure_proxy

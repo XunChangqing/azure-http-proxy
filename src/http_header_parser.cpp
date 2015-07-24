@@ -132,6 +132,9 @@ http_headers_container http_header_parser::parse_headers(std::string::const_iter
             ch == '_' || ch == '|' ||
             ch == '~');
     };
+    auto is_space = [](char ch) -> bool {
+        return ' ' == ch;
+    };
 
     enum class parse_header_state {
         header_field_name_start,
@@ -163,10 +166,11 @@ http_headers_container http_header_parser::parse_headers(std::string::const_iter
                 }
                 break;
             case parse_header_state::header_field_name:
-                if (is_token_char(*iter)) {
+				if (is_token_char(*iter) || *iter == ' ') {
                     header_field_name.push_back(*iter);
                 }
-                else if (*iter == ':') {
+                else if (*iter == ':'){
+					//|| *iter == ' ') {
                     state = parse_header_state::header_field_value_left_ows;
                 }
                 else {

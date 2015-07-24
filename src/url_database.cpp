@@ -63,7 +63,7 @@ UrlDatabase::UrlDatabase(){
 	sqlite3_prepare_v2(db_, kInsertWhiteList, -1, &insert_white_list_stmt_, NULL) ||
 	sqlite3_prepare_v2(db_, kGetCountWhiteList, -1, &get_count_white_list_stmt_, NULL)
 	){
-		BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Cann't prepare statment!"));
+		BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Cann't prepare statment!" + std::string(sqlite3_errmsg(db_))));
 	}
 }
 

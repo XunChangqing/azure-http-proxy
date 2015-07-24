@@ -88,6 +88,8 @@ private:
 	std::string Compress(std::string);
 	std::string BuildRequestUrl();
 	std::string GetDomainName(std::string host);
+	bool IsAllRecved();
+	void HandleCompleteResponse();
 };
 
 } // namespace azure_proxy

@@ -46,6 +46,8 @@ struct http_proxy_server_connection_context {
 struct http_proxy_server_connection_read_request_context {
     bool is_proxy_client_keep_alive;
 	std::string domain_name;
+	std::string scheme_host;
+	std::string request_url;
 	int count_white_list;
     boost::optional<std::uint64_t> content_length;
     std::uint64_t content_length_has_read;
