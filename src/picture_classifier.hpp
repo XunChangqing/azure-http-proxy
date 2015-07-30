@@ -26,11 +26,13 @@ public:
   bool LoadModel(const std::string &model_file, const std::string &trained_file,
                  const std::string &mean_file);
   void AsyncClassifyPicture(std::string format, std::string picture,
-                            std::function<void(std::string, bool)> handler);
+                            std::function<void(std::string, int)> handler);
+
+  static void Test(std::string imagesdir);
 
 private:
   void ClassifyPicture(std::string format, std::string picture,
-                       std::function<void(std::string, bool)> handler);
+                       std::function<void(std::string, int)> handler);
   // std::vector<Prediction> Classify(const cv::Mat &img, int N);
   void SetMean(const std::string &mean_file);
   std::vector<float> Predict(const cv::Mat &img);

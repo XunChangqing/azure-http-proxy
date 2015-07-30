@@ -32,6 +32,19 @@ const int kMaxHtmlBufferSize = 50;
 const int kPornPicNumThd = 100;
 const enum FilterMode kFilterMode = FILTER_PORN_SITE;
 
+const char *kBindAddress = "127.0.0.1";
+const int kBindPort = 8090;
+const char *kDeployProto = "nin/deploy.prototxt";
+const char *kModelName = "nin/20150726/model_256__iter_50000.caffemodel";
+const char *kMeanName = "nin/imagenet_mean.binaryproto";
+const int kTimeout = 30;
+const int kWorkers = 2;
+const char* kProxyLogDir = "Logs";
+const float kPornThd = 0.5f;
+const int kMinWidth = 200;
+const int kMinHeigth = 180;
+const char* kImageCacheDir = "images";
+
 unsigned char ToHex(unsigned char x) 
 { 
   return  x > 9 ? x + 55 : x + 48; 
@@ -99,7 +112,7 @@ namespace keywords = boost::log::keywords;
 namespace expr = boost::log::expressions;
 
 ////[ example_tutorial_file_advanced
-void InitLogging()
+void InitLogging(std::string collector_target)
 {
 	boost::shared_ptr< logging::core > core = logging::core::get();
 
@@ -124,7 +137,7 @@ void InitLogging()
 		);
 
 	file_sink->locked_backend()->set_file_collector(sinks::file::make_collector(
-		keywords::target = "logs",
+		keywords::target = collector_target,
 		keywords::max_size = 16 * 1024 * 1024,
 		keywords::min_free_space = 100 * 1024 * 1024
 		));

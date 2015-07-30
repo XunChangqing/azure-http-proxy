@@ -81,7 +81,7 @@ private:
     void on_origin_server_data_written();
     void on_error(const boost::system::error_code& error);
     void on_timeout();
-    void OnClassify(std::string, bool);
+    void OnClassify(std::string, int);
 
 	//helpers
 	std::string Decompress(std::string);

@@ -23,7 +23,7 @@
 #include "gumbo.h"
 
 #include "authentication.hpp"
-#include "http_proxy_server_config.hpp"
+//#include "http_proxy_server_config.hpp"
 #include "http_proxy_server_connection.hpp"
 #include "misc.hpp"
 
@@ -121,37 +121,15 @@ void http_proxy_server_connection::async_connect_to_origin_server()
         }
     }
 
-    if (this->origin_server_socket.is_open() &&(
-        (this->request_header->host() == this->connection_context.origin_server_name &&
-        this->request_header->port() == this->connection_context.origin_server_port)||
-        (http_proxy_server_config::get_instance().enable_filter_mode()))) {
+    if (this->origin_server_socket.is_open() &&
+        this->request_header->host() == this->connection_context.origin_server_name &&
+        this->request_header->port() == this->connection_context.origin_server_port) {
         this->connection_context.reconnect_on_error = true;
         this->on_connect();
     }
     else {
-        //mythxcq
-        //boost::asio::ip::tcp::resolver::query query(this->request_header->host(), std::to_string(this->request_header->port()));
-        //when connect method, connect to the original server, else to squid3 proxy server
-        if(this->request_header->method() == "CONNECT"){
-          this->connection_context.origin_server_name = this->request_header->host();
-          this->connection_context.origin_server_port = this->request_header->port();
-        }
-        else if(http_proxy_server_config::get_instance().enable_filter_mode()){
-          this->connection_context.origin_server_name = "127.0.0.1";
-          this->connection_context.origin_server_port = 3128;
-        }
-        //else if(http_proxy_server_config::get_instance().enable_request_bypass() &&
-             //boost::regex_match(this->request_data->path_and_query(), boost::regex("*\.jpg") ))
-        //{
-          ////remote filter proxy server
-          ////shoule be set dinamically
-        //}
-        else{
-          this->connection_context.origin_server_name = this->request_header->host();
-          this->connection_context.origin_server_port = this->request_header->port();
-        }
-
-        //mythxcq
+		this->connection_context.origin_server_name = this->request_header->host();
+		this->connection_context.origin_server_port = this->request_header->port();
 
         boost::asio::ip::tcp::resolver::query query(this->connection_context.origin_server_name,
             std::to_string(this->connection_context.origin_server_port));
@@ -175,37 +153,27 @@ void http_proxy_server_connection::async_connect_to_origin_server()
 
 void http_proxy_server_connection::async_write_request_header_to_origin_server()
 {
-  if(http_proxy_server_config::get_instance().enable_filter_mode() 
-      //|| (http_proxy_server_config::get_instance().enable_request_bypass() &&
-       //boost::regex_match(this->request_data->path_and_query(), boost::regex("*\.jpg") ))
-      ){
-    this->connection_context.connection_state = proxy_connection_state::write_http_request_header;
-    this->async_write_data_to_origin_server(this->request_data.data(), 0, this->request_data.size());
-  }
-  else{
-    auto request_content_begin = this->request_data.begin() + this->request_data.find("\r\n\r\n") + 4;
-    this->modified_request_data = this->request_header->method();
-    this->modified_request_data.push_back(' ');
-    this->modified_request_data += this->request_header->path_and_query();
-    this->modified_request_data += " HTTP/";
-    this->modified_request_data += this->request_header->http_version();
-    this->modified_request_data += "\r\n"; 
+	auto request_content_begin = this->request_data.begin() + this->request_data.find("\r\n\r\n") + 4;
+	this->modified_request_data = this->request_header->method();
+	this->modified_request_data.push_back(' ');
+	this->modified_request_data += this->request_header->path_and_query();
+	this->modified_request_data += " HTTP/";
+	this->modified_request_data += this->request_header->http_version();
+	this->modified_request_data += "\r\n";
 
-    this->request_header->erase_header("Proxy-Connection");
-    this->request_header->erase_header("Proxy-Authorization");
+	this->request_header->erase_header("Proxy-Connection");
+	this->request_header->erase_header("Proxy-Authorization");
 
-    for (const auto& header: this->request_header->get_headers_map()) {
-        this->modified_request_data += std::get<0>(header);
-        this->modified_request_data += ": ";
-        this->modified_request_data += std::get<1>(header);
-        this->modified_request_data += "\r\n";
-    }
-    this->modified_request_data += "\r\n";
-    this->modified_request_data.append(request_content_begin, this->request_data.end());
-    this->connection_context.connection_state = proxy_connection_state::write_http_request_header;
-    this->async_write_data_to_origin_server(this->modified_request_data.data(), 0, this->modified_request_data.size());
-    //mythxcq
-  }
+	for (const auto& header : this->request_header->get_headers_map()) {
+		this->modified_request_data += std::get<0>(header);
+		this->modified_request_data += ": ";
+		this->modified_request_data += std::get<1>(header);
+		this->modified_request_data += "\r\n";
+	}
+	this->modified_request_data += "\r\n";
+	this->modified_request_data.append(request_content_begin, this->request_data.end());
+	this->connection_context.connection_state = proxy_connection_state::write_http_request_header;
+	this->async_write_data_to_origin_server(this->modified_request_data.data(), 0, this->modified_request_data.size());
 }
 
 void http_proxy_server_connection::async_write_response_header_to_proxy_client()
@@ -361,7 +329,8 @@ void http_proxy_server_connection::report_authentication_failed()
 
 void http_proxy_server_connection::set_timer()
 {
-    if (this->timer.expires_from_now(std::chrono::seconds(http_proxy_server_config::get_instance().get_timeout())) != 0) {
+    //if (this->timer.expires_from_now(std::chrono::seconds(http_proxy_server_config::get_instance().get_timeout())) != 0) {
+    if (this->timer.expires_from_now(std::chrono::seconds(kTimeout)) != 0) {
         assert(false);
     }
     auto self(this->shared_from_this());
@@ -397,18 +366,6 @@ void http_proxy_server_connection::on_resolved(boost::asio::ip::tcp::resolver::i
     auto self(this->shared_from_this());
     this->connection_context.connection_state = proxy_connection_state::connect_to_origin_server;
     this->set_timer();
-    //mythxcq
-    //const time_t t = time(NULL);
-    //struct tm* current_time = localtime(&t);
-      //<<current_time->tm_min<<":"
-      //<<current_time->tm_sec<<"@@"
-      //<<(unsigned long)this<<"@@"
-      //<<"Resolved: "
-      //<<this->request_header->host()
-      ////<<this->request_header->port()<<","
-      //<<this->request_header->path_and_query()<<","
-      //<<this->request_header->method()
-      //<<std::endl;
 
     this->origin_server_socket.async_connect(endpoint_iterator->endpoint(),
         this->strand.wrap([this, self, endpoint_iterator](const boost::system::error_code& error) mutable {
@@ -513,28 +470,19 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
             return;
         }
 
-        if (http_proxy_server_config::get_instance().enable_auth()) {
-            auto proxy_authorization_value = this->request_header->get_header_value("Proxy-Authorization");
-            bool auth_success = false;
-            if (proxy_authorization_value) {
-                if (authentication::get_instance().auth(*proxy_authorization_value) == auth_result::ok) {
-                    auth_success = true;
-                }
-            }
-            if (!auth_success) {
-                this->report_authentication_failed();
-                return;
-            }
-        }
-
-		//black list filter
-		this->read_request_context.domain_name = GetDomainName(this->request_header->host());
-		if (url_database_.GetCountTmpBlackList(this->read_request_context.domain_name) ||
-			url_database_.GetCountBlackList(this->read_request_context.domain_name)){
-			this->report_error("400", "Host not allowed", std::string());
-			return;
-		}
-		this->read_request_context.count_white_list = url_database_.GetCountWhiteList(this->read_request_context.domain_name);
+        //if (http_proxy_server_config::get_instance().enable_auth()) {
+        //    auto proxy_authorization_value = this->request_header->get_header_value("Proxy-Authorization");
+        //    bool auth_success = false;
+        //    if (proxy_authorization_value) {
+        //        if (authentication::get_instance().auth(*proxy_authorization_value) == auth_result::ok) {
+        //            auth_success = true;
+        //        }
+        //    }
+        //    if (!auth_success) {
+        //        this->report_authentication_failed();
+        //        return;
+        //    }
+        //}
 
 		//init request url and scheme and host
 		std::string url = this->request_header->scheme() + "://" + this->request_header->host();
@@ -543,6 +491,20 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
 		this->read_request_context.scheme_host = url;
 		std::string url_val(url + this->request_header->path_and_query());
 		this->read_request_context.request_url = url + this->request_header->path_and_query();
+		//all lower case to insensitive
+		std::transform(this->read_request_context.request_url.begin(), this->read_request_context.request_url.end(),
+			this->read_request_context.request_url.begin(), std::tolower);
+
+		//black list filter
+		this->read_request_context.domain_name = GetDomainName(this->request_header->host());
+		if (url_database_.GetIdTmpBlackList(this->read_request_context.domain_name) ||
+			url_database_.GetIdBlackList(this->read_request_context.domain_name)){
+			this->url_database_.InsertBlockedPage(this->read_request_context.request_url);
+			this->report_error("400", "Host not allowed", std::string());
+			return;
+		}
+		this->read_request_context.id_white_list = url_database_.GetIdWhiteList(this->read_request_context.domain_name);
+
 
         if (this->request_header->method() == "CONNECT") {
             this->async_connect_to_origin_server();
@@ -656,30 +618,6 @@ void http_proxy_server_connection::on_proxy_client_data_arrived(std::size_t byte
     else if (this->connection_context.connection_state == proxy_connection_state::tunnel_transfer) {
         this->async_write_data_to_origin_server(this->upgoing_buffer_write.data(), 0, bytes_transferred);
     }
-}
-
-
-static void search_for_links(GumboNode* node, std::string scheme_host, std::set<std::string> &srclist) {
-  if (node->type != GUMBO_NODE_ELEMENT) {
-    return;
-  }
-  GumboAttribute* src;
-  if (node->v.element.tag == GUMBO_TAG_IMG &&
-      (src = gumbo_get_attribute(&node->v.element.attributes, "src"))) {
-	  //srclist.insert(std::string(src->value));
-	  std::string src_val(src->value);
-	  //transform src to lower case
-	  std::transform(src_val.begin(), src_val.end(), src_val.begin(), std::tolower);
-	  if (src_val.size() > 0 && src_val[0] == '/')
-		  src_val = scheme_host + src_val;
-	  srclist.insert(src_val);
-    //std::cout << src->value << std::endl;
-  }
-
-  GumboVector* children = &node->v.element.children;
-  for (unsigned int i = 0; i < children->length; ++i) {
-    search_for_links(static_cast<GumboNode*>(children->data[i]), scheme_host, srclist);
-  }
 }
 
 void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t bytes_transferred)
@@ -835,13 +773,12 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 		//	this->response_header->SetHeaderValue("Cache-Control", "max-age=0");
 		//}
 
-		//if (http_proxy_server_config::get_instance().enable_response_filter() &&
 		if ( //content encoding
 			(!this->read_response_context.content_encoding
 			|| (*this->read_response_context.content_encoding == kGzipEncoding))
 			//content type
 			&& this->read_response_context.content_type
-			&& (this->read_response_context.is_origin_server_keep_alive)
+			//&& (this->read_response_context.is_origin_server_keep_alive)
 			//not redirect
 			//&& (!this->response_header->get_header_value("Location"))
 			//satus code need to be 200, it is 3xx when redirect
@@ -855,7 +792,7 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 			) &&
 			(this->read_response_context.content_length && *this->read_response_context.content_length > 0) &&
 			(
-			kFilterMode == FILTER_ALL || !this->read_request_context.count_white_list
+			kFilterMode == FILTER_ALL || !this->read_request_context.id_white_list
 			)
 			)
 			//transfer type
@@ -863,7 +800,7 @@ void http_proxy_server_connection::on_origin_server_data_arrived(std::size_t byt
 			||
 			(
 			(*this->read_response_context.content_type) == kHtmlType &&
-			!this->read_request_context.count_white_list &&
+			!this->read_request_context.id_white_list &&
 			((this->read_response_context.content_length && *this->read_response_context.content_length > 0)
 			|| this->read_response_context.chunk_checker)
 			)
@@ -1047,31 +984,40 @@ void http_proxy_server_connection::on_timeout()
 
 
 //void http_proxy_server_connection::OnClassify(int mode)
-void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal)
+void http_proxy_server_connection::OnClassify(std::string pic, int type)
 {
 	//BOOST_LOG_TRIVIAL(debug) << "Classify pic: " << BuildRequestUrl() << std::endl;
-	if (isillegal){
-		BOOST_LOG_TRIVIAL(debug) << "Porn pic: " << this->read_request_context.request_url << std::endl;
+	if (type>=2){
+		//BOOST_LOG_TRIVIAL(info) << "Sexy or Porn pic: " << this->read_request_context.request_url << std::endl;
 		//insert to porn_pics database
-		url_database_.InsertPornPic(this->read_request_context.request_url);
-		for (auto eachset : server_context_.imgsrc_dict){
-			if (eachset.second.find(this->read_request_context.request_url) != eachset.second.end()){
-				boost::network::uri::uri porn_page_uri(eachset.first);
-				BOOST_LOG_TRIVIAL(debug) << "\tHit: " << porn_page_uri.host() << porn_page_uri.path();
-				//write to porn detect table of database
-				//domain name, html url, pic url, detect time
-				std::string domain_name(GetDomainName(porn_page_uri.host()));
-				url_database_.InsertPornPage(domain_name, eachset.first, this->read_request_context.request_url);
-				//check number of porn pics this domain_name contains
-				int num = url_database_.GetPornPicNumOfDomainName(domain_name);
-				BOOST_LOG_TRIVIAL(debug) << "Number of porn pics in: " << domain_name << " is: " << num;
-				//add to temp black list, if contains too many porn pics
-				if (num > kPornPicNumThd){//&& !url_database_.GetCountWhiteList(domain_name)){
-					BOOST_LOG_TRIVIAL(info) << "Add " << domain_name << " to temp black list";
-					url_database_.InsertIntoTmpBlackList(domain_name);
-					//add this domain name to web server
+		url_database_.InsertPornPic(this->read_request_context.request_url, type);
+		//store the image;
+		std::ofstream of(std::string(kImageCacheDir) + std::string("/") + UrlEncode(this->read_request_context.request_url), std::fstream::binary);
+		of << this->read_response_context.decompressed_origin_data; of.close();
+		//detect porn host according to porn pic only
+		if (type == 3){
+			BOOST_LOG_TRIVIAL(info) << "Porn pic: " << this->read_request_context.request_url;
+			server_context_.imgsrc_dict_mutex.lock();
+			for (auto eachset : server_context_.imgsrc_dict){
+				if (eachset.second.find(this->read_request_context.request_url) != eachset.second.end()){
+					boost::network::uri::uri porn_page_uri(eachset.first);
+					BOOST_LOG_TRIVIAL(info) << "\tHit: " << porn_page_uri.host() << porn_page_uri.path();
+					//write to porn detect table of database
+					//domain name, html url, pic url, detect time
+					std::string domain_name(GetDomainName(porn_page_uri.host()));
+					url_database_.InsertPornPage(domain_name, eachset.first, this->read_request_context.request_url);
+					//check number of porn pics this domain_name contains
+					int num = url_database_.GetPornPicNumOfDomainName(domain_name);
+					BOOST_LOG_TRIVIAL(debug) << "Number of porn pics in: " << domain_name << " is: " << num;
+					//add to temp black list, if contains too many porn pics
+					if (num > kPornPicNumThd){//&& !url_database_.GetCountWhiteList(domain_name)){
+						BOOST_LOG_TRIVIAL(info) << "Add " << domain_name << " to temp black list";
+						url_database_.InsertIntoTmpBlackList(domain_name);
+						//add this domain name to web server
+					}
 				}
 			}
+			server_context_.imgsrc_dict_mutex.unlock();
 		}
 	}
 	//insert into processed_pics
@@ -1088,7 +1034,7 @@ void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal)
 	}
 	this->modified_response_data += "\r\n";
 
-	const std::string& jpeg_place_holder = http_proxy_server_config::get_instance().GetJpegPlaceHolder();
+	//const std::string& jpeg_place_holder = http_proxy_server_config::get_instance().GetJpegPlaceHolder();
 	//if(mode >=0)
 	//this->response_header->SetHeaderValue("Content-Length", std::to_string(jpeg_place_holder.size()));
 	//if(mode == 1){
@@ -1110,6 +1056,111 @@ void http_proxy_server_connection::OnClassify(std::string pic, bool isillegal)
 	this->connection_context.connection_state = proxy_connection_state::write_http_response_header;
 	this->async_write_data_to_proxy_client(this->modified_response_data.data(), 0, this->modified_response_data.size());
 	//this->async_write_response_header_to_proxy_client();
+}
+
+bool http_proxy_server_connection::IsAllRecved(){
+	if (this->read_response_context.content_length &&
+		this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
+		return true;
+	}
+	else if (this->read_response_context.chunk_checker &&
+		this->read_response_context.chunk_checker->is_complete()){
+		return true;
+	}
+	else
+		return false;
+}
+
+static void search_for_links(GumboNode* node, std::string scheme_host, std::set<std::string> &srclist) {
+	if (node->type != GUMBO_NODE_ELEMENT) {
+		return;
+	}
+	GumboAttribute* src;
+	if (node->v.element.tag == GUMBO_TAG_IMG &&
+		(src = gumbo_get_attribute(&node->v.element.attributes, "src"))) {
+		//srclist.insert(std::string(src->value));
+		std::string src_val(src->value);
+		//transform src to lower case
+		if (src_val.size() > 0 && src_val[0] == '/')
+			src_val = scheme_host + src_val;
+		std::transform(src_val.begin(), src_val.end(), src_val.begin(), std::tolower);
+		srclist.insert(src_val);
+		//std::cout << src->value << std::endl;
+	}
+
+	GumboVector* children = &node->v.element.children;
+	for (unsigned int i = 0; i < children->length; ++i) {
+		search_for_links(static_cast<GumboNode*>(children->data[i]), scheme_host, srclist);
+	}
+}
+
+void http_proxy_server_connection::HandleCompleteResponse(){
+	//std::cout << "All Recved: " << this->request_header->host() << this->request_header->path_and_query() << std::endl;
+	//filter the response
+	auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
+	std::string response_content_data(response_content_begin, this->response_data.end());
+
+	//extract the data from chunk, it only happens for html
+	if (this->read_response_context.chunk_checker)
+		response_content_data = this->read_response_context.chunk_checker->GetData();
+
+	//if content-encoding == gzip, decompress
+	std::string decompressed_response_content_data = Decompress(response_content_data);
+	this->read_response_context.decompressed_origin_data = decompressed_response_content_data;
+
+	if (*this->read_response_context.content_type == kHtmlType){
+		//std::cout << this->request_header->host() << std::endl;
+		//if (server_context_.imgsrc_dict.find(BuildRequestUrl()) == server_context_.imgsrc_dict.end()){
+		//server_context_.imgsrc_dict[BuildRequestUrl()] = std::set<std::string>();
+		//}
+		//use whole host+path&query as key, ignore port
+		//std::set<std::string>& srcset = server_context_.imgsrc_dict[];
+		std::set<std::string> srcset;
+		GumboOutput* output = gumbo_parse(decompressed_response_content_data.c_str());
+		//search for links and insert to the set
+		search_for_links(output->root, this->read_request_context.scheme_host, srcset);
+		gumbo_destroy_output(&kGumboDefaultOptions, output);
+		//add to map
+		if (srcset.size() > 0){
+			BOOST_LOG_TRIVIAL(info) << this->read_request_context.request_url << ":";
+			for (auto src : srcset){
+				BOOST_LOG_TRIVIAL(info) << "\t" << src;
+			}
+			server_context_.imgsrc_dict_mutex.lock();
+			bool exist = false;
+			for (auto eachset : server_context_.imgsrc_dict){
+				//if exist, replace it
+				if (eachset.first == this->read_request_context.request_url){
+					eachset.second = std::move(srcset);
+					exist = true;
+					break;
+				}
+			}
+			//else add new, and remove the oldest
+			if (!exist){
+				server_context_.imgsrc_dict.push_back(std::make_pair(this->read_request_context.request_url, std::move(srcset)));
+				if (server_context_.imgsrc_dict.size() > kMaxHtmlBufferSize){
+					server_context_.imgsrc_dict.erase(server_context_.imgsrc_dict.begin());
+				}
+			}
+			//server_context_.imgsrc_dict[BuildRequestUrl()] = std::move(srcset);
+			server_context_.imgsrc_dict_mutex.unlock();
+			//check if the pic is porn according database, otherwise the cached pic will not be classified again
+			//then we cannot identify the cached pic
+			//....
+		}
+		//then send back
+		this->async_write_response_header_to_proxy_client();
+	}
+	else if (*this->read_response_context.content_type == kJpegType
+		|| *this->read_response_context.content_type == kPngType){
+		std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
+		picture_classifier_.AsyncClassifyPicture(*this->read_response_context.content_type, decompressed_response_content_data,
+			this->strand.wrap([this, self](std::string oimg, int type) {
+			this->OnClassify(oimg, type);
+		})
+			);
+	}
 }
 
 std::string http_proxy_server_connection::Decompress(std::string in){
@@ -1187,86 +1238,5 @@ std::string http_proxy_server_connection::GetDomainName(std::string host)
 	return std::string(ps->domain.data, ps->domain.len);
 }
 
-bool http_proxy_server_connection::IsAllRecved(){
-	if (this->read_response_context.content_length &&
-		this->read_response_context.content_length_has_read >= *this->read_response_context.content_length){
-		return true;
-	}
-	else if (this->read_response_context.chunk_checker &&
-		this->read_response_context.chunk_checker->is_complete()){
-		return true;
-	}
-	else
-		return false;
-}
-
-void http_proxy_server_connection::HandleCompleteResponse(){
-	//std::cout << "All Recved: " << this->request_header->host() << this->request_header->path_and_query() << std::endl;
-	//filter the response
-	auto response_content_begin = this->response_data.begin() + this->response_data.find("\r\n\r\n") + 4;
-	std::string response_content_data(response_content_begin, this->response_data.end());
-
-	//extract the data from chunk, it only happens for html
-	if (this->read_response_context.chunk_checker)
-		response_content_data = this->read_response_context.chunk_checker->GetData();
-
-	//if content-encoding == gzip, decompress
-	std::string decompressed_response_content_data = Decompress(response_content_data);
-
-	if (*this->read_response_context.content_type == kHtmlType){
-		//std::cout << this->request_header->host() << std::endl;
-		//if (server_context_.imgsrc_dict.find(BuildRequestUrl()) == server_context_.imgsrc_dict.end()){
-		//server_context_.imgsrc_dict[BuildRequestUrl()] = std::set<std::string>();
-		//}
-		//use whole host+path&query as key, ignore port
-		//std::set<std::string>& srcset = server_context_.imgsrc_dict[];
-		std::set<std::string> srcset;
-		GumboOutput* output = gumbo_parse(decompressed_response_content_data.c_str());
-		//search for links and insert to the set
-		search_for_links(output->root, this->read_request_context.scheme_host, srcset);
-		gumbo_destroy_output(&kGumboDefaultOptions, output);
-		//add to map
-		if (srcset.size() > 0){
-			BOOST_LOG_TRIVIAL(debug) << this->read_request_context.request_url << ":" << std::endl;
-			for (auto src : srcset){
-				BOOST_LOG_TRIVIAL(debug) <<"\t"<< src << std::endl;
-			}
-			server_context_.imgsrc_dict_mutex.lock();
-			bool exist = false;
-			for (auto eachset : server_context_.imgsrc_dict){
-				//if exist, replace it
-				if (eachset.first == this->read_request_context.request_url){
-					eachset.second = std::move(srcset);
-					exist = true;
-					break;
-				}
-			}
-			//else add new, and remove the oldest
-			if (!exist){
-				server_context_.imgsrc_dict.push_back(std::make_pair(this->read_request_context.request_url, std::move(srcset)));
-				if (server_context_.imgsrc_dict.size() > kMaxHtmlBufferSize){
-					server_context_.imgsrc_dict.erase(server_context_.imgsrc_dict.begin());
-				}
-			}
-			//server_context_.imgsrc_dict[BuildRequestUrl()] = std::move(srcset);
-			server_context_.imgsrc_dict_mutex.unlock();
-			//check if the pic is porn according database, otherwise the cached pic will not be classified again
-			//then we cannot identify the cached pic
-			//....
-		}
-		//then send back
-		this->async_write_response_header_to_proxy_client();
-	}
-	else if (*this->read_response_context.content_type == kJpegType
-		|| *this->read_response_context.content_type == kPngType){
-		std::shared_ptr<http_proxy_server_connection> self(this->shared_from_this());
-		picture_classifier_.AsyncClassifyPicture(*this->read_response_context.content_type, decompressed_response_content_data,
-			this->strand.wrap([this, self](std::string oimg, bool isillegal) {
-			this->OnClassify(oimg, isillegal);
-		})
-			);
-	}
-
-}
 
 } // namespace azure_proxy

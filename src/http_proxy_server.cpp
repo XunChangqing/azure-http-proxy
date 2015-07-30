@@ -13,7 +13,7 @@
 #include "misc.hpp"
 
 #include "http_proxy_server.hpp"
-#include "http_proxy_server_config.hpp"
+//#include "http_proxy_server_config.hpp"
 #include "http_proxy_server_connection.hpp"
 
 namespace azure_proxy {
@@ -26,13 +26,17 @@ http_proxy_server::http_proxy_server(io_service &network_io_service,
       classification_service_(classification_service), picture_classifier_(classification_service) {}
 
 void http_proxy_server::run() {
-  const auto &config = http_proxy_server_config::get_instance();
+  //const auto &config = http_proxy_server_config::get_instance();
 
-  picture_classifier_.LoadModel(config.GetDeployProto(), config.GetModel(), config.GetMean());
+  //picture_classifier_.LoadModel(config.GetDeployProto(), config.GetModel(), config.GetMean());
+  picture_classifier_.LoadModel(kDeployProto, kModelName, kMeanName);
   
+  //boost::asio::ip::tcp::endpoint endpoint(
+  //    boost::asio::ip::address::from_string(config.get_bind_address()),
+  //    config.get_listen_port());
   boost::asio::ip::tcp::endpoint endpoint(
-      boost::asio::ip::address::from_string(config.get_bind_address()),
-      config.get_listen_port());
+      boost::asio::ip::address::from_string(kBindAddress),
+      kBindPort);
   acceptor_.open(endpoint.protocol());
   acceptor_.bind(endpoint);
   acceptor_.listen(socket_base::max_connections);
@@ -40,8 +44,7 @@ void http_proxy_server::run() {
 
   std::vector<std::thread> td_vec;
 
-  for (auto i = 0u; i < config.get_workers(); ++i) {
-  //for (auto i = 0u; i < 1; ++i) {
+  for (auto i = 0u; i < kWorkers; ++i) {
     td_vec.emplace_back([this]() {
       try {
         this->network_io_service_.run();

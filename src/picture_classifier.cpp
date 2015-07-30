@@ -1,7 +1,10 @@
 #include <thread>
+#include <fstream>
 #include <boost/bind.hpp>
+#include <boost/filesystem.hpp>
 #include <caffe/caffe.hpp>
 #include "picture_classifier.hpp"
+#include "misc.hpp"
 
 namespace azure_proxy {
 	using namespace caffe;
@@ -191,15 +194,13 @@ void PictureClassifier::Preprocess(const cv::Mat &img,
 
 void PictureClassifier::AsyncClassifyPicture(std::string format,
                                              std::string picture,
-                                             std::function<void(std::string, bool)> handler) {
+                                             std::function<void(std::string, int)> handler) {
   classification_service_.post(boost::bind(&PictureClassifier::ClassifyPicture,
                                            this, format, picture, handler));
 }
 
-const int kMinWidth = 200;
-const int kMinHeigth = 200;
 void PictureClassifier::ClassifyPicture(std::string format, std::string picture,
-                                        std::function<void(std::string, bool)> handler) {
+                                        std::function<void(std::string, int)> handler) {
   //std::cout << "porn classify: " << std::this_thread::get_id() << std::endl;
   // cv::Mat img = cv::imread(file, -1);
   std::vector<char> picdata(picture.begin(), picture.end());
@@ -215,28 +216,95 @@ void PictureClassifier::ClassifyPicture(std::string format, std::string picture,
   // CHECK(!img.empty()) << "Unable to decode image " << picture;
   // std::vector<Prediction> predictions = classifier.Classify(img, 2);
   std::vector<float> output = Predict(img);
-  std::vector<int> maxN = Argmax(output, 1);
-  //std::cout << "Porn classify result: " << maxN[0] << std::endl;
-  //handler(maxN[0]);
-  if (maxN[0] == 1){//porn
+  if (output.size()<4)
+	  BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Output of classifier is not 4 classes!"));
+  //BOOST_LOG_TRIVIAL(debug) << "Prob of Types: " << output[0] << "  " << output[1] << "  " << output[2] << "  " << output[3];
+
+  if (output[3] > kPornThd){
 	  //draw tag on the picture
-	  cv::blur(img, img, cv::Size(5, 5));
+	  //cv::blur(img, img, cv::Size(5, 5));
 	  cv::rectangle(img, cv::Rect(0, 0, img.cols, img.rows), cv::Scalar(0, 0, 255), (float)img.cols*0.1f);
 	  //encode to jpeg
 	  size_t pos;
 	  std::string postfix = ".jpg";
 	  if ((pos = format.rfind('/')) != std::string::npos){
-		  //std::string postfix(input, pos, input.size());
 		  postfix.replace(1, std::string::npos, format.substr(pos + 1, std::string::npos));
-		  //postfix[0] = '.';
-		  //std::cout << postfix << std::endl;
 	  }
 	  std::vector<uchar> obuf;
 	  cv::imencode(postfix, img, obuf);
 	  std::string oimg(obuf.begin(), obuf.end());
-	  handler(oimg, true);
+	  handler(oimg, 3);
   }
-  else
-	  handler(picture, false);
+  else if (output[2] > 0.25f){
+	  //draw tag on the picture
+	  //cv::blur(img, img, cv::Size(5, 5));
+	  cv::rectangle(img, cv::Rect(0, 0, img.cols, img.rows), cv::Scalar(0, 255, 255), (float)img.cols*0.1f);
+	  //encode to jpeg
+	  size_t pos;
+	  std::string postfix = ".jpg";
+	  if ((pos = format.rfind('/')) != std::string::npos){
+		  postfix.replace(1, std::string::npos, format.substr(pos + 1, std::string::npos));
+	  }
+	  std::vector<uchar> obuf;
+	  cv::imencode(postfix, img, obuf);
+	  std::string oimg(obuf.begin(), obuf.end());
+	  handler(oimg, 2);
+  }
+  else if (output[1] > 0.25f){
+	  //rettype = 1;
+	  handler(picture, 1);
+  }
+  else{
+	  //rettype = 0;
+	  handler(picture, 0);
+  }
+  //std::vector<int> maxN = Argmax(output, 1);
+  //std::cout << "Porn classify result: " << maxN[0] << std::endl;
+  //handler(maxN[0]);
+  //if (maxN[0] == 1){//porn
+  //}
+  //else
+	 // handler(picture, false);
+}
+
+void PictureClassifier::Test(std::string imagesdir){
+	namespace fs = boost::filesystem;
+	fs::path p(imagesdir);
+	fs::path op("output_images");
+	fs::create_directories(op);
+
+	boost::asio::io_service tmp_classification_service;
+	PictureClassifier classifier(tmp_classification_service);
+	if(!classifier.LoadModel(kDeployProto, kModelName, kMeanName))
+		BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Faied load caffe model"));
+	//auto handler = [std::string filename](std::string image, int type){
+	//	BOOST_LOG_TRIVIAL(info) << 
+	//}
+	if (exists(p) && is_directory(p)){
+		BOOST_LOG_TRIVIAL(info) << "Testing in: " << imagesdir;
+		//std::copy(fs::directory_iterator(p), fs::directory_iterator(), std::ostream_iterator<fs::directory_entry>(std::cout, "\n"));
+		for (auto iter = fs::directory_iterator(p);iter!=fs::directory_iterator() ;++iter){
+			if (fs::is_regular_file(iter->path())){
+				fs::path np(op);
+				np /= iter->path().filename();
+				std::string ofilename = np.string();
+				//BOOST_LOG_TRIVIAL(info) << np;
+				BOOST_LOG_TRIVIAL(info) << iter->path().filename().string();
+				//BOOST_LOG_TRIVIAL(info) << filename;
+				std::ostringstream ostr;
+				std::ifstream infs(iter->path().string(), std::fstream::binary);
+				ostr << infs.rdbuf();
+				infs.close();
+				//std::string input_img = ostr.str();
+				classifier.ClassifyPicture("jpeg", ostr.str(), [ofilename](std::string img, int type){
+					std::ofstream of(ofilename, std::fstream::binary | std::fstream::out);
+					of << img;
+					of.close();
+				});
+			}
+		}
+		//classifier.
+	}
+
 }
 }

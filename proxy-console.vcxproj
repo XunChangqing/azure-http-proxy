@@ -92,7 +92,6 @@
     <ClCompile Include="src\base64.cpp" />
     <ClCompile Include="src\http_header_parser.cpp" />
     <ClCompile Include="src\http_proxy_server.cpp" />
-    <ClCompile Include="src\http_proxy_server_config.cpp" />
     <ClCompile Include="src\http_proxy_server_connection.cpp" />
     <ClCompile Include="src\http_proxy_server_main.cpp" />
     <ClCompile Include="src\jsonxx\jsonxx.cc" />
@@ -109,7 +108,6 @@
     <ClInclude Include="src\http_chunk_checker.hpp" />
     <ClInclude Include="src\http_header_parser.hpp" />
     <ClInclude Include="src\http_proxy_server.hpp" />
-    <ClInclude Include="src\http_proxy_server_config.hpp" />
     <ClInclude Include="src\http_proxy_server_connection.hpp" />
     <ClInclude Include="src\http_proxy_server_connection_context.hpp" />
     <ClInclude Include="src\jsonxx\jsonxx.h" />

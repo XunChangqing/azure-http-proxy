@@ -13,8 +13,22 @@ extern const char* kPngType;
 extern const char* kHtmlType;
 extern const char* kGzipEncoding;
 extern const int kMaxHtmlBufferSize;
-extern const int kPornPicNumThd;
 extern const enum FilterMode kFilterMode;
+
+//configurations
+extern const int kPornPicNumThd;
+extern const char *kBindAddress;
+extern const int kBindPort;
+extern const char *kDeployProto;
+extern const char *kModelName;
+extern const char *kMeanName;
+extern const int kTimeout;
+extern const int kWorkers;
+extern const char* kProxyLogDir;
+extern const float kPornThd;
+extern const int kMinWidth;
+extern const int kMinHeigth;
+extern const char* kImageCacheDir;
 
 //url helppers
 unsigned char ToHex(unsigned char x);
@@ -27,7 +41,7 @@ typedef boost::error_info<struct tag_message_info, const std::string> MessageInf
 struct FatalException : virtual boost::exception, virtual std::exception { }; 
 
 //boost log
-void InitLogging();
+void InitLogging(std::string collector_target);
 
 }
 #endif
