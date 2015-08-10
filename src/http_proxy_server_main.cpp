@@ -7,12 +7,14 @@
 
 #include <iostream>
 #include <boost/filesystem.hpp>
+#include <boost/asio/signal_set.hpp>
 
 //#include "http_proxy_server_config.hpp"
 #include "http_proxy_server.hpp"
 #include "glog/logging.h"
 #include "misc.hpp"
 #include "url_database.h"
+#include "curl.h"
 
 #include "picture_classifier.hpp"
 
@@ -20,10 +22,12 @@ int main(int argc, char **argv) {
   using namespace azure_proxy;
   namespace fs = boost::filesystem;
   //try{
+	 // curl_global_init(CURL_GLOBAL_ALL);
 	 // InitLogging(kProxyLogDir);
 	 // UrlDatabase::InitAndCreate();
 	 // //PictureClassifier::Test("test_images");
 	 // UrlDatabase::Test();
+	 // curl_global_cleanup();
   //}
   //catch (const boost::exception &e){
 	 // BOOST_LOG_TRIVIAL(fatal) << boost::diagnostic_information(e);
@@ -33,6 +37,7 @@ int main(int argc, char **argv) {
   //}
 
   try {
+	  curl_global_init(CURL_GLOBAL_ALL);
 	  ::google::InitGoogleLogging(argv[0]);
 	  InitLogging(kProxyLogDir);
 	  UrlDatabase::InitAndCreate();
@@ -48,9 +53,12 @@ int main(int argc, char **argv) {
 		  << kBindPort << std::endl;
 	  boost::asio::io_service io_service;
 	  boost::asio::io_service classification_service;
-	  http_proxy_server server(io_service, classification_service);
+	  boost::asio::io_service webaccess_service;
+	  http_proxy_server server(io_service, classification_service, webaccess_service);
+	  //handle ctrl c signal to exit cleanly
+	  boost::asio::signal_set signals(io_service, SIGINT, SIGTERM);
+	  signals.async_wait(boost::bind(&boost::asio::io_service::stop, &io_service));
 	  server.run();
-	  //}
   }
   catch (const boost::exception &e){
 	  BOOST_LOG_TRIVIAL(fatal) << boost::diagnostic_information(e);
@@ -60,5 +68,6 @@ int main(int argc, char **argv) {
 	  BOOST_LOG_TRIVIAL(fatal) << e.what();
 	  //exit(EXIT_FAILURE);
   }
+  curl_global_cleanup();
   return 0;
 }

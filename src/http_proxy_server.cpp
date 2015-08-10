@@ -21,9 +21,12 @@ using namespace boost;
 using namespace boost::asio;
 
 http_proxy_server::http_proxy_server(io_service &network_io_service,
-                                     io_service &classification_service)
+                                     io_service &classification_service,
+									 io_service &webaccess_service)
     : network_io_service_(network_io_service), acceptor_(network_io_service),
-      classification_service_(classification_service), picture_classifier_(classification_service) {}
+      classification_service_(classification_service), picture_classifier_(classification_service),
+	  webaccess_service_(webaccess_service)
+{}
 
 void http_proxy_server::run() {
   //const auto &config = http_proxy_server_config::get_instance();
@@ -81,6 +84,27 @@ void http_proxy_server::run() {
 	  });
   }
 
+  optional<io_service::work> webaccess_work(
+	  in_place(ref(webaccess_service_)));
+
+  std::vector<std::thread> webaccess_td_vec;
+
+  for (auto i = 0u; i < 2; ++i) {
+	  webaccess_td_vec.emplace_back([this]() {
+		  try {
+			  this->webaccess_service_.run();
+		  }
+		  catch (const boost::exception &e){
+			  BOOST_LOG_TRIVIAL(fatal) << boost::diagnostic_information(e);
+			  exit(EXIT_FAILURE);
+		  }
+		  catch (const std::exception &e) {
+			  BOOST_LOG_TRIVIAL(fatal) << e.what();
+			  exit(EXIT_FAILURE);
+		  }
+	  });
+  }
+
   for (auto &td : td_vec) {
 	  td.join();
   }
@@ -89,6 +113,13 @@ void http_proxy_server::run() {
   for (auto &td : back_td_vec) {
 	  td.join();
   }
+
+  webaccess_work = boost::none;
+  for (auto &td : webaccess_td_vec) {
+	  td.join();
+  }
+
+  BOOST_LOG_TRIVIAL(info) << "Exit!";
 
 }
 
@@ -99,7 +130,7 @@ void http_proxy_server::start_accept() {
 		if (!error) {
 			//std::cout<< "new connection!\n";
 			auto connection = http_proxy_server_connection::create(
-				std::move(*socket), picture_classifier_, server_context_);
+				std::move(*socket), picture_classifier_, webaccess_service_, server_context_);
 			connection->start();
 			this->start_accept();
 		}

@@ -1,7 +1,9 @@
+#include <thread>
 #include "boost/format.hpp"
+#include <boost/bind.hpp>
 #include "misc.hpp"
 //#include "parse_domain.hpp"
-
+#include "curl.h"
 #include "url_database.h"
 
 namespace azure_proxy{
@@ -64,7 +66,9 @@ void UrlDatabase::InitAndCreate(){
 	//sqlite3_close(db);
 }
 
-UrlDatabase::UrlDatabase(){
+UrlDatabase::UrlDatabase(boost::asio::io_service &webaccess_service):
+webaccess_service_(webaccess_service)
+{
 	if (sqlite3_open_v2(kUrlDatabaseName, &db_, SQLITE_OPEN_READWRITE, NULL)){
 		BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Cann't open database!"));
 	}
@@ -124,6 +128,34 @@ void UrlDatabase::InsertBlockedPage(std::string url){
 
 void UrlDatabase::InsertIntoTmpBlackList(std::string domain_name){
 	InsertListItem("tmp_black_list", domain_name);
+	//async post to web server
+	webaccess_service_.post(boost::bind<void>([domain_name](){
+		CURL *curl;
+		CURLcode res;
+		/* get a curl handle */
+		curl = curl_easy_init();
+		if (curl) {
+			/* First set the URL that is about to receive our POST. This URL can
+			just as well be a https:// URL if that is what should receive the
+			data. */
+			curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.0.105:3000/tmp_domain_names_create.json");
+			/* Now specify the POST data */
+			std::string param_domain_name = "domain_name=" + domain_name;
+			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, param_domain_name.c_str());
+
+			/* Perform the request, res will get the return code */
+			res = curl_easy_perform(curl);
+			/* Check for errors */
+			if (res != CURLE_OK)
+				BOOST_LOG_TRIVIAL(warning) << "Failed to post tmp black list to web server!";
+				//fprintf(stderr, "curl_easy_perform() failed: %s\n",
+				//curl_easy_strerror(res));
+
+			/* always cleanup */
+			curl_easy_cleanup(curl);
+		}
+	}
+	));
 }
 void UrlDatabase::InsertIntoBlackList(std::string domain_name){
 	InsertListItem("black_list", domain_name);
@@ -132,12 +164,16 @@ void UrlDatabase::InsertIntoWhiteList(std::string domain_name){
 	InsertListItem("white_list", domain_name);
 }
 
-void UrlDatabase::InsertListItem(std::string list_name, std::string domain_name){
+bool UrlDatabase::InsertListItem(std::string list_name, std::string domain_name){
 	boost::format fmt(kInsertIntoDomainList);
 	fmt%list_name; fmt%domain_name;
 	//BOOST_LOG_TRIVIAL(debug) << fmt.str();
-	if (sqlite3_exec(db_, fmt.str().c_str(), NULL, NULL, NULL))
+	if (sqlite3_exec(db_, fmt.str().c_str(), NULL, NULL, NULL)){
 		BOOST_LOG_TRIVIAL(warning) << "Failed to insert list item";
+		return false;
+	}
+	else
+		return true;
 }
 
 static int RetIntCallback(void* retint, int cols, char** col_values, char** col_names){
@@ -218,8 +254,33 @@ void UrlDatabase::ClearAllTables(){
 //helpers
 void UrlDatabase::Test()
 {
+	using namespace boost;
+	using namespace boost::asio;
+	boost::asio::io_service webaccess_service;
+	boost::asio::io_service *pwebaccess_service = &webaccess_service;
+	optional<io_service::work> webaccess_work(
+		in_place(ref(webaccess_service)));
+
+	std::vector<std::thread> webaccess_td_vec;
+
+	for (auto i = 0u; i < 2; ++i) {
+		webaccess_td_vec.emplace_back([pwebaccess_service]() {
+			try {
+				pwebaccess_service->run();
+			}
+			catch (const boost::exception &e){
+				BOOST_LOG_TRIVIAL(fatal) << boost::diagnostic_information(e);
+				exit(EXIT_FAILURE);
+			}
+			catch (const std::exception &e) {
+				BOOST_LOG_TRIVIAL(fatal) << e.what();
+				exit(EXIT_FAILURE);
+			}
+		});
+	}
+
 	for (int i = 0; i < 10; ++i){
-		UrlDatabase db;
+		UrlDatabase db(webaccess_service);
 		int tmp;
 		db.InsertBlockedPage("bbb.com/sdfsdf");
 		db.InsertBlockedPage("bbb.com/sdfsdf");
@@ -298,6 +359,11 @@ void UrlDatabase::Test()
 		//get item from black_list
 
 		//get item from white_list
+	}
+
+	webaccess_work = boost::none;
+	for (auto &td : webaccess_td_vec) {
+		td.join();
 	}
 
 	//void UrlDatabase::InsertIntoListWithDomainName(std::string list_name, std::string domain_name){

@@ -35,12 +35,14 @@ class http_proxy_server {
   io_service &network_io_service_;
   ip::tcp::acceptor acceptor_;
   io_service &classification_service_;
+  io_service &webaccess_service_;
   PictureClassifier picture_classifier_;
   http_proxy_server_context server_context_;
 
 public:
   http_proxy_server(io_service &network_io_service,
-                    io_service &classification_service);
+                    io_service &classification_service,
+					io_service &webaccess_service);
   void run();
 
 private:

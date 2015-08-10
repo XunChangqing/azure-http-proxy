@@ -4,14 +4,16 @@
 #include <string>
 #include <vector>
 #include <sqlite3.h>
+#include <boost/asio.hpp>
 
 namespace azure_proxy{
 
 class UrlDatabase{
+	boost::asio::io_service &webaccess_service_;
 public:
 	static void InitAndCreate();
 	static void Test();
-	UrlDatabase();
+	UrlDatabase(boost::asio::io_service &webaccess_service);
 	~UrlDatabase();// { if (db_) sqlite3_close(db_); }
 	void InsertPornPic(std::string url, int type);
 	int GetPornPicID(std::string url);
@@ -44,7 +46,7 @@ private:
 	void ExcuteNonQuery(sqlite3_stmt *stmt);
 	int GetItemIDorCount(sqlite3_stmt* stmt, std::string table_name, std::string arg_name, std::string arg_value);
 	int ExcuteRetInt(sqlite3_stmt* stmt);
-	void InsertListItem(std::string list_name, std::string domain_name);
+	bool InsertListItem(std::string list_name, std::string domain_name);
 
 	void ClearAllTables();
 };

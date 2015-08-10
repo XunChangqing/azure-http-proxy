@@ -30,6 +30,7 @@ const std::size_t BUFFER_LENGTH = 2048;
 
 class http_proxy_server_connection : public std::enable_shared_from_this<http_proxy_server_connection> {
   PictureClassifier& picture_classifier_;
+  boost::asio::io_service& webaccess_service_;
   http_proxy_server_context& server_context_;
   tldnode          *tree;
   UrlDatabase url_database_;
@@ -53,10 +54,12 @@ class http_proxy_server_connection : public std::enable_shared_from_this<http_pr
     http_proxy_server_connection_read_request_context read_request_context;
     http_proxy_server_connection_read_response_context read_response_context;
 private:
-    http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier, http_proxy_server_context &server_context);
+    http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier,
+		boost::asio::io_service &webaccess_service, http_proxy_server_context &server_context);
 public:
     ~http_proxy_server_connection();
-    static std::shared_ptr<http_proxy_server_connection> create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier, http_proxy_server_context& server_context);
+    static std::shared_ptr<http_proxy_server_connection> create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier,
+		boost::asio::io_service &webaccess_service, http_proxy_server_context& server_context);
     void start();
 private:
     void async_read_data_from_proxy_client(std::size_t at_least_size = 1, std::size_t at_most_size = BUFFER_LENGTH);

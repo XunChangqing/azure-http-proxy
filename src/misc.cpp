@@ -29,7 +29,7 @@ const char* kPngType = "image/png";
 const char* kHtmlType = "text/html";
 const char* kGzipEncoding = "gzip";
 const int kMaxHtmlBufferSize = 50;
-const int kPornPicNumThd = 100;
+const int kPornPicNumThd = 50;
 const enum FilterMode kFilterMode = FILTER_PORN_SITE;
 
 const char *kBindAddress = "127.0.0.1";

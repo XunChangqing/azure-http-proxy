@@ -37,8 +37,11 @@ namespace azure_proxy {
   using namespace boost::asio;
 
 //http_proxy_server_connection::http_proxy_server_connection(boost::asio::ip::tcp::socket&& proxy_client_socket) :
- http_proxy_server_connection::http_proxy_server_connection(ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier, http_proxy_server_context& server_context):
+ http_proxy_server_connection::http_proxy_server_connection(ip::tcp::socket&& proxy_client_socket, PictureClassifier& picture_classifier,
+	 boost::asio::io_service &webaccess_service, http_proxy_server_context& server_context):
    picture_classifier_(picture_classifier),
+   webaccess_service_(webaccess_service),
+   url_database_(webaccess_service),
    server_context_(server_context),
     strand(proxy_client_socket.get_io_service()),
     proxy_client_socket(std::move(proxy_client_socket)),
@@ -54,9 +57,11 @@ http_proxy_server_connection::~http_proxy_server_connection()
 	free_tld_tree(tree);
 }
 
-std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier, http_proxy_server_context& server_context)
+std::shared_ptr<http_proxy_server_connection> http_proxy_server_connection::create(boost::asio::ip::tcp::socket&& client_socket, PictureClassifier& picture_classifier,
+	boost::asio::io_service& webaccess_service, http_proxy_server_context& server_context)
 {
-    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket), picture_classifier, server_context));
+    return std::shared_ptr<http_proxy_server_connection>(new http_proxy_server_connection(std::move(client_socket), picture_classifier,
+		webaccess_service, server_context));
 }
 
 void http_proxy_server_connection::start()
@@ -1010,9 +1015,13 @@ void http_proxy_server_connection::OnClassify(std::string pic, int type)
 					int num = url_database_.GetPornPicNumOfDomainName(domain_name);
 					BOOST_LOG_TRIVIAL(debug) << "Number of porn pics in: " << domain_name << " is: " << num;
 					//add to temp black list, if contains too many porn pics
-					if (num > kPornPicNumThd){//&& !url_database_.GetCountWhiteList(domain_name)){
-						BOOST_LOG_TRIVIAL(info) << "Add " << domain_name << " to temp black list";
-						url_database_.InsertIntoTmpBlackList(domain_name);
+					//if (num > kPornPicNumThd){//&& !url_database_.GetCountWhiteList(domain_name)){
+					if (num >= kPornPicNumThd && this->read_request_context.id_white_list == 0){
+						if (url_database_.GetIdTmpBlackList(domain_name) == 0)
+						{
+							BOOST_LOG_TRIVIAL(info) << "Add " << domain_name << " to temp black list";
+							url_database_.InsertIntoTmpBlackList(domain_name);
+						}
 						//add this domain name to web server
 					}
 				}
