@@ -44,6 +44,7 @@ const float kPornThd = 0.5f;
 const int kMinWidth = 200;
 const int kMinHeigth = 180;
 const char* kImageCacheDir = "images";
+const char* kCreateTmpDomainNameUrl = "http://121.40.144.14:8080/domain_admin/tmp_domain_names_create.json";
 
 unsigned char ToHex(unsigned char x) 
 { 

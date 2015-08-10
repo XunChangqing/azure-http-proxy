@@ -138,7 +138,7 @@ void UrlDatabase::InsertIntoTmpBlackList(std::string domain_name){
 			/* First set the URL that is about to receive our POST. This URL can
 			just as well be a https:// URL if that is what should receive the
 			data. */
-			curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.0.105:3000/tmp_domain_names_create.json");
+			curl_easy_setopt(curl, CURLOPT_URL, kCreateTmpDomainNameUrl);
 			/* Now specify the POST data */
 			std::string param_domain_name = "domain_name=" + domain_name;
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, param_domain_name.c_str());

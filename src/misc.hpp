@@ -29,6 +29,7 @@ extern const float kPornThd;
 extern const int kMinWidth;
 extern const int kMinHeigth;
 extern const char* kImageCacheDir;
+extern const char* kCreateTmpDomainNameUrl;
 
 //url helppers
 unsigned char ToHex(unsigned char x);
