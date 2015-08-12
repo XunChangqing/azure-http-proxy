@@ -1,5 +1,6 @@
 #include "misc.hpp"
 
+#include <string>
 #include <fstream>
 #include <boost/log/core.hpp>
 #include <boost/log/trivial.hpp>
@@ -39,12 +40,30 @@ const char *kModelName = "nin/20150726/model_256__iter_50000.caffemodel";
 const char *kMeanName = "nin/imagenet_mean.binaryproto";
 const int kTimeout = 30;
 const int kWorkers = 2;
-const char* kProxyLogDir = "Logs";
+const char* kProxyLogDir = "\\logs";
 const float kPornThd = 0.5f;
 const int kMinWidth = 200;
 const int kMinHeigth = 180;
-const char* kImageCacheDir = "images";
+const char* kImageCacheDir = "\\images";
 const char* kCreateTmpDomainNameUrl = "http://121.40.144.14:8080/domain_admin/tmp_domain_names_create.json";
+
+const char* kUrlDatabaseName = "porn.db";
+
+GlobalConfig* GlobalConfig::GetInstance(){
+	return kSingleInstance;
+}
+
+GlobalConfig *GlobalConfig::kSingleInstance;
+
+GlobalConfig::GlobalConfig(std::string work_dir) :
+work_dir_(work_dir), images_cache_dir_(work_dir + kImageCacheDir), logs_dir_(work_dir + kProxyLogDir),
+porn_db_path_(work_dir+"\\"+kUrlDatabaseName)
+{}
+
+void GlobalConfig::LoadConfig(std::string work_dir){
+	kSingleInstance = new GlobalConfig(work_dir);
+}
+
 
 unsigned char ToHex(unsigned char x) 
 { 
@@ -119,7 +138,7 @@ void InitLogging(std::string collector_target)
 
 	boost::shared_ptr< sinks::text_file_backend > file_backend =
 		boost::make_shared< sinks::text_file_backend >(
-		keywords::file_name = "LOG_%Y-%m-%d_%H-%M-%S.%N.log",
+		keywords::file_name = collector_target+"/LOG_%Y-%m-%d_%H-%M-%S.%N.log",
 		keywords::rotation_size = 5 * 1024 * 1024,
 		keywords::time_based_rotation = sinks::file::rotation_at_time_point(0, 0, 0),
 		keywords::auto_flush = true

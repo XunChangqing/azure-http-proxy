@@ -7,7 +7,6 @@
 #include "url_database.h"
 
 namespace azure_proxy{
-const char* kUrlDatabaseName = "porn.db";
 
 //const char* kInsertPornPic = "insert or replace into porn_pics (id, url, type) values ((select id from porn_pics where url=:url), :url, :type)";
 //const char* kInsertPornPage = "insert or replace into porn_pages (id, domain_name, page_url, porn_pic_id) values ((select id from porn_pages where page_url=:page_url and porn_pic_id=:porn_pic_id), :domain_name, :page_url, :porn_pic_id)";
@@ -69,8 +68,8 @@ void UrlDatabase::InitAndCreate(){
 UrlDatabase::UrlDatabase(boost::asio::io_service &webaccess_service):
 webaccess_service_(webaccess_service)
 {
-	if (sqlite3_open_v2(kUrlDatabaseName, &db_, SQLITE_OPEN_READWRITE, NULL)){
-		BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Cann't open database!"));
+	if (sqlite3_open_v2(GlobalConfig::GetInstance()->GetPornDBPath().c_str(), &db_, SQLITE_OPEN_READWRITE, NULL)){
+		BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Cann't open database: "+GlobalConfig::GetInstance()->GetPornDBPath()));
 	}
 	//if (sqlite3_prepare_v2(db_, kInsertPornPic, -1, &insert_porn_pic_stmt_, NULL))
 	//	BOOST_THROW_EXCEPTION(FatalException() << MessageInfo("Cann't prepare statment!" + std::string(sqlite3_errmsg(db_))));
@@ -148,8 +147,11 @@ void UrlDatabase::InsertIntoTmpBlackList(std::string domain_name){
 			/* Check for errors */
 			if (res != CURLE_OK)
 				BOOST_LOG_TRIVIAL(warning) << "Failed to post tmp black list to web server!";
+			else
+				BOOST_LOG_TRIVIAL(info) << "Post tmp black to web server: " << domain_name;
 				//fprintf(stderr, "curl_easy_perform() failed: %s\n",
 				//curl_easy_strerror(res));
+
 
 			/* always cleanup */
 			curl_easy_cleanup(curl);

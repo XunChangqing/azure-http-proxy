@@ -997,7 +997,7 @@ void http_proxy_server_connection::OnClassify(std::string pic, int type)
 		//insert to porn_pics database
 		url_database_.InsertPornPic(this->read_request_context.request_url, type);
 		//store the image;
-		std::ofstream of(std::string(kImageCacheDir) + std::string("/") + UrlEncode(this->read_request_context.request_url), std::fstream::binary);
+		std::ofstream of(std::string(GlobalConfig::GetInstance()->GetImageCacheDir()) + std::string("/") + UrlEncode(this->read_request_context.request_url), std::fstream::binary);
 		of << this->read_response_context.decompressed_origin_data; of.close();
 		//detect porn host according to porn pic only
 		if (type == 3){
@@ -1013,7 +1013,7 @@ void http_proxy_server_connection::OnClassify(std::string pic, int type)
 					url_database_.InsertPornPage(domain_name, eachset.first, this->read_request_context.request_url);
 					//check number of porn pics this domain_name contains
 					int num = url_database_.GetPornPicNumOfDomainName(domain_name);
-					BOOST_LOG_TRIVIAL(debug) << "Number of porn pics in: " << domain_name << " is: " << num;
+					BOOST_LOG_TRIVIAL(info) << "Number of porn pics in: " << domain_name << " is: " << num;
 					//add to temp black list, if contains too many porn pics
 					//if (num > kPornPicNumThd){//&& !url_database_.GetCountWhiteList(domain_name)){
 					if (num >= kPornPicNumThd && this->read_request_context.id_white_list == 0){

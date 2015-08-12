@@ -24,12 +24,31 @@ extern const char *kModelName;
 extern const char *kMeanName;
 extern const int kTimeout;
 extern const int kWorkers;
-extern const char* kProxyLogDir;
+//extern const char* kProxyLogDir;
 extern const float kPornThd;
 extern const int kMinWidth;
 extern const int kMinHeigth;
-extern const char* kImageCacheDir;
+//extern const char* kImageCacheDir;
 extern const char* kCreateTmpDomainNameUrl;
+
+//config
+class GlobalConfig{
+public:
+	static GlobalConfig* GetInstance();
+	static void LoadConfig(std::string work_dir);
+	std::string GetWorkDir(){ return work_dir_; }
+	std::string GetImageCacheDir(){ return images_cache_dir_; }
+	std::string GetPornDBPath(){ return porn_db_path_; }
+	std::string GetLogsDir(){ return logs_dir_; }
+private:
+	static GlobalConfig *kSingleInstance;
+	GlobalConfig(std::string work_dir);
+
+	std::string work_dir_;
+	std::string images_cache_dir_;
+	std::string porn_db_path_;
+	std::string logs_dir_;
+};
 
 //url helppers
 unsigned char ToHex(unsigned char x);
