@@ -90,7 +90,8 @@ std::string UrlEncode(const std::string& str)
         (str[i] == '-') ||
         (str[i] == '_') || 
         (str[i] == '.') || 
-        (str[i] == '~'))
+        (str[i] == '~') ||
+		(str[i] == '!')) //C# do not encode 
       strTemp += str[i];
     else if (str[i] == ' ')
       strTemp += "+";

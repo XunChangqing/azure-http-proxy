@@ -37,6 +37,9 @@ int main(int argc, char **argv) {
   //catch (const std::exception &e) {
 	 // BOOST_LOG_TRIVIAL(fatal) << e.what();
   //}
+  //std::string x = "http://asearch.alicdn.com/bao/uploaded/i1/11939060996247010/tb2wljtbxxxxxxzxxxxxxxxxxxx_!!23641939-0-saturn_solar.jpg_250x250.jpg";
+  //x = UrlEncode(x);
+
 
   try {
 	  po::options_description desc("Allowed options");
